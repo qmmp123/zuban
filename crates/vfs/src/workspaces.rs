@@ -36,10 +36,12 @@ impl Workspaces {
         root: Arc<NormalizedPath>,
         kind: WorkspaceKind,
     ) {
-        self.items
-            .write()
-            .unwrap()
-            .push(Workspace::new(vfs, scheme, root, kind))
+        let mut items = self.items.write().unwrap();
+        if items.iter().any(|item| item.root_path == root) {
+            // The path is already in there
+            return;
+        }
+        items.push(Workspace::new(vfs, scheme, root, kind))
     }
 
     pub(crate) fn add_at_start(
@@ -49,8 +51,12 @@ impl Workspaces {
         root: Arc<NormalizedPath>,
         kind: WorkspaceKind,
     ) {
-        self.inner_items_mut()
-            .insert(0, Workspace::new(vfs, scheme, root, kind))
+        let items = self.inner_items_mut();
+        if items.iter().any(|item| item.root_path == root) {
+            // The path is already in there
+            return;
+        }
+        items.insert(0, Workspace::new(vfs, scheme, root, kind))
     }
 
     fn inner_items_mut(&mut self) -> &mut Vec<Arc<Workspace>> {

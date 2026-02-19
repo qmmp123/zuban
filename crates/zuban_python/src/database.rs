@@ -1142,11 +1142,17 @@ impl Database {
         };
 
         for (kind, p1) in &new_db.project.sys_path {
-            if self.project.sys_path.iter().any(|(_, p2)| p1 == p2) {
-                continue;
-            }
             new_db.vfs.add_workspace(p1.clone(), *kind)
         }
+        tracing::debug!(
+            "Workspace base paths (for reused project): {:?}",
+            new_db
+                .vfs
+                .workspaces
+                .iter()
+                .map(|w| (w.kind, w.root_path()))
+                .collect::<Vec<_>>()
+        );
 
         let mut set_pointer = |pointer_ref: &mut *const PythonFile, name, is_package| {
             for (i, file_state) in new_db.vfs.files.iter_mut().enumerate() {
@@ -1557,14 +1563,6 @@ fn add_workspace_and_check_for_pth_files(
     is_recovery: bool,
     kind: WorkspaceKind,
 ) {
-    if vfs
-        .workspaces
-        .iter()
-        .any(|workspace| workspace.root_path() == &**path)
-    {
-        // The workspaces already contains the path
-        return;
-    }
     vfs.add_workspace(path, kind);
     if !is_recovery {
         // Imitate the logic for .pth files. Copied some of the logic from site.py from the Python
