@@ -1095,6 +1095,15 @@ impl Database {
         };
 
         this.generate_python_state();
+
+        tracing::debug!(
+            "Workspace base paths: {:?}",
+            this.vfs
+                .workspaces
+                .iter()
+                .map(|w| (w.kind, w.root_path()))
+                .collect::<Vec<_>>()
+        );
         this
     }
 
