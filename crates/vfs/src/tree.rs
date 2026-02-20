@@ -163,8 +163,8 @@ pub struct MissingEntry {
 
 #[derive(Debug, Clone)]
 pub struct NestedWorkspace {
-    name: Box<str>,
-    workspace: Weak<Workspace>,
+    pub(crate) name: Box<str>,
+    pub(crate) workspace: Weak<Workspace>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,12 +235,12 @@ pub(crate) enum AddedKind {
 }
 
 impl Directory {
-    pub(crate) fn new(parent: Parent, name: Box<str>) -> Arc<Self> {
-        Arc::new(Self {
+    pub(crate) fn new(parent: Parent, name: Box<str>) -> Self {
+        Self {
             entries: Default::default(),
             parent,
             name,
-        })
+        }
     }
 
     pub fn absolute_path(&self, vfs: &dyn VfsHandler) -> PathWithScheme {
@@ -272,6 +272,7 @@ impl Directory {
     ) -> &'x Entries {
         dir.entries.get_or_init(|| {
             vfs.read_and_watch_dir(
+                &*workspaces.items.read().unwrap(),
                 &dir.absolute_path(vfs).path,
                 Parent::Directory(Arc::downgrade(dir)),
             )

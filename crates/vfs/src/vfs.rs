@@ -675,9 +675,12 @@ impl<F: VfsFile> Vfs<F> {
                     );
                     return;
                 }
-                let new_entry =
-                    self.handler
-                        .read_and_watch_entry(path, parent.clone(), replace_name);
+                let new_entry = self.handler.read_and_watch_entry(
+                    &*self.workspaces.items.read().unwrap(),
+                    path,
+                    parent.clone(),
+                    replace_name,
+                );
                 match new_entry {
                     Some(new_entry) => {
                         if let Some(mut to_replace) = in_dir.search_mut(replace_name) {

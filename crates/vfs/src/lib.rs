@@ -31,9 +31,16 @@ pub trait VfsHandler: Sync + Send {
     fn read_and_watch_file(&self, path: &PathWithScheme) -> Option<String>;
     fn notify_receiver(&self) -> Option<&Receiver<NotifyEvent>>;
     fn on_invalidated_in_memory_file(&self, path: PathWithScheme);
-    fn read_and_watch_dir(&self, path: &str, parent: Parent) -> Entries;
+    fn read_and_watch_dir(
+        &self,
+        workspaces: &[Arc<Workspace>],
+        path: &str,
+        parent: Parent,
+    ) -> Entries;
+
     fn read_and_watch_entry(
         &self,
+        workspaces: &[Arc<Workspace>],
         path: &str,
         parent: Parent,
         replace_name: &str,

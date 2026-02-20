@@ -25,7 +25,7 @@ pub enum WorkspaceKind {
 
 #[derive(Debug, Default)]
 pub struct Workspaces {
-    items: RwLock<Vec<Arc<Workspace>>>,
+    pub(crate) items: RwLock<Vec<Arc<Workspace>>>,
 }
 
 impl Workspaces {
@@ -41,7 +41,8 @@ impl Workspaces {
             // The path is already in there
             return;
         }
-        items.push(Workspace::new(vfs, scheme, root, kind))
+        let workspace = Workspace::new(vfs, &*items, scheme, root, kind);
+        items.push(workspace)
     }
 
     pub(crate) fn add_at_start(
@@ -56,7 +57,7 @@ impl Workspaces {
             // The path is already in there
             return;
         }
-        items.insert(0, Workspace::new(vfs, scheme, root, kind))
+        items.insert(0, Workspace::new(vfs, items, scheme, root, kind))
     }
 
     fn inner_items_mut(&mut self) -> &mut Vec<Arc<Workspace>> {
@@ -329,6 +330,7 @@ pub struct Workspace {
 impl Workspace {
     fn new(
         vfs: &dyn VfsHandler,
+        workspaces: &[Arc<Workspace>],
         scheme: Scheme,
         root_path: Arc<NormalizedPath>,
         kind: WorkspaceKind,
@@ -387,6 +389,7 @@ impl Workspace {
             return workspace;
         }
         let new_entries = vfs.read_and_watch_dir(
+            workspaces,
             &workspace.root_path,
             Parent::Workspace(Arc::downgrade(&workspace)),
         );
@@ -464,7 +467,7 @@ fn ensure_dirs_and_file(
                 _ => unimplemented!("Dir overwrite of file; When does this happen?"),
             }
         };
-        let dir2 = Directory::new(parent, Box::from(name));
+        let dir2 = Arc::new(Directory::new(parent, Box::from(name)));
         let mut result = ensure_dirs_and_file(
             Parent::Directory(Arc::downgrade(&dir2)),
             Directory::entries_with_workspaces(vfs, workspaces, &dir2),
