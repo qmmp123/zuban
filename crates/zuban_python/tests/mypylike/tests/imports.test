@@ -719,3 +719,24 @@ typing.a  # E: Module has no attribute "a"
 
 [file typing/__init__.pyi]
 # E: Module shadows the typeshed module "typing"
+
+[case read_file_only_once]
+
+[file pyproject.toml]
+[tool.zuban]
+mypy_path = ["src", "src/inner"]
+
+[file src/inner/m1.py]
+import m2
+from inner.m2 import C
+import src
+
+a: m2.C = C()
+b: C = m2.C()
+c: C = C()
+d: m2.C = m2.C()
+
+e: src.inner.m2.C = C()
+
+[file src/inner/m2.py]
+class C: ...

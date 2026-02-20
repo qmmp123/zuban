@@ -173,11 +173,18 @@ pub struct MissingEntry {
 }
 
 #[derive(Debug, Clone)]
+pub struct NestedWorkspace {
+    name: Box<str>,
+    workspace: Weak<Workspace>,
+}
+
+#[derive(Debug, Clone)]
 pub enum DirectoryEntry {
     File(Arc<FileEntry>),
     Directory(Arc<Directory>),
     MissingEntry(MissingEntry),
     Gitignore(Arc<GitignoreFile>),
+    NestedWorkspace(NestedWorkspace),
 }
 
 impl DirectoryEntry {
@@ -187,6 +194,7 @@ impl DirectoryEntry {
             DirectoryEntry::Directory(dir) => &dir.name,
             DirectoryEntry::MissingEntry(MissingEntry { name, .. }) => name,
             DirectoryEntry::Gitignore(_) => ".gitignore",
+            DirectoryEntry::NestedWorkspace(w) => &w.name,
         }
     }
 
@@ -326,9 +334,10 @@ impl Entries {
             } else {
                 return match &*entry {
                     DirectoryEntry::File(f) => Some(DirOrFile::File(f.clone())),
-                    DirectoryEntry::MissingEntry(_) => None,
                     DirectoryEntry::Directory(d) => Some(DirOrFile::Dir(d.clone())),
-                    DirectoryEntry::Gitignore(_) => None,
+                    DirectoryEntry::MissingEntry(_)
+                    | DirectoryEntry::Gitignore(_)
+                    | DirectoryEntry::NestedWorkspace(_) => None,
                 };
             }
         }
@@ -375,9 +384,11 @@ impl Entries {
                     *entry = DirectoryEntry::File(file_entry.clone());
                     file_entry
                 }
-                DirectoryEntry::Directory(..) => unimplemented!(
-                    "What happens when we want to write a file on top of a directory? When does this happen?"
-                ),
+                DirectoryEntry::Directory(..) | DirectoryEntry::NestedWorkspace(_) => {
+                    unimplemented!(
+                        "What happens when we want to write a file on top of a directory? When does this happen?"
+                    )
+                }
                 DirectoryEntry::Gitignore(_) => {
                     let g = new_gitignore();
                     *entry = DirectoryEntry::Gitignore(g.clone());
@@ -432,7 +443,7 @@ impl Entries {
                 // Files might be named `pytest` and therefore not be a valid Python files, but
                 // still exist in the tree.
                 DirectoryEntry::File(file) => file.invalidations.add(invalidates),
-                DirectoryEntry::Directory(_) => {
+                DirectoryEntry::Directory(_) | DirectoryEntry::NestedWorkspace(_) => {
                     // TODO this probably happens with a directory called `foo.py`.
                     tracing::error!("Did not add invalidation for directory {}", name);
                 }
@@ -468,6 +479,9 @@ impl Entries {
                         self.remove_name(name);
                         Ok(())
                     }
+                }
+                DirectoryEntry::NestedWorkspace(_) => {
+                    Err("Nested workspace for {path} should probably not be deleted?!".into())
                 }
                 DirectoryEntry::MissingEntry { .. } => {
                     Err(format!("Path {path} cannot be found (missing)"))

@@ -133,8 +133,8 @@ impl<'db> ImportFinder<'db> {
             .borrow()
             .iter()
             .filter_map(|dir_entry| match dir_entry {
-                DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => None,
-                e => Some(e.clone()),
+                DirectoryEntry::File(_) | DirectoryEntry::Directory(_) => Some(dir_entry.clone()),
+                _ => None,
             })
             .collect();
         entries.into_par_iter().for_each(|entry| match entry {
@@ -149,14 +149,14 @@ impl<'db> ImportFinder<'db> {
                     self.find_importable_name_in_file_entry(&entry, false);
                 }
             }
-            DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => {
-                unreachable!("Removed above")
-            }
             DirectoryEntry::Directory(dir) => self.find_importable_name_in_entries(
                 Directory::entries(&*self.db.vfs.handler, &dir),
                 true,
                 add_submodules,
             ),
+            _ => {
+                unreachable!("Removed above")
+            }
         })
     }
 
@@ -236,7 +236,7 @@ fn all_recursive_public_typeshed_file_entries(
                     }
                     recurse(db, found, Directory::entries(&*db.vfs.handler, dir))
                 }
-                DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => (),
+                _ => (),
             }
         })
     }

@@ -751,4 +751,40 @@ mod tests {
             ["m.py:1: error: \"int\" not callable  [operator]"]
         );
     }
+
+    #[test]
+    fn test_read_file_only_once() {
+        logging_config::setup_logging_for_tests();
+        let test_dir = test_utils::write_files_from_fixture(
+            r#"
+            [file pyproject.toml]
+            [tool.zuban]
+            mypy_path = ["src", "src/inner"]
+
+            [file src/inner/m1.py]
+            import m2
+            from inner.m2 import C
+            import src
+
+            a: m2.C = C()
+            b: C = m2.C()
+            c: C = C()
+            d: m2.C = m2.C()
+
+            e: src.inner.m2.C = C()
+
+            wrong1: src.inner.m2.C = 1
+
+            [file src/inner/m2.py]
+            class C: ...
+            "#,
+            false,
+        );
+        let diagnostics = diagnostics(Cli::parse_from([""]), test_dir.path());
+
+        assert_eq!(
+            diagnostics,
+            ["m.py:1: error: \"int\" not callable  [operator]"]
+        );
+    }
 }

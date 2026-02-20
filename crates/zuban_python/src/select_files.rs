@@ -183,7 +183,7 @@ impl<'db> FileSelector<'db> {
                         let path = match entry {
                             DirectoryEntry::File(file) => file.absolute_path(vfs_handler),
                             DirectoryEntry::Directory(dir) => dir.absolute_path(vfs_handler),
-                            DirectoryEntry::Gitignore(_) | DirectoryEntry::MissingEntry(_) => {
+                            _ => {
                                 return false;
                             }
                         };
@@ -248,7 +248,7 @@ impl<'db> FileSelector<'db> {
                     self.handle_dir(dir)
                 }
             }
-            DirectoryEntry::Gitignore(_) | DirectoryEntry::MissingEntry(_) => (),
+            _ => (),
         }
     }
 

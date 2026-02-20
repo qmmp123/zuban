@@ -658,6 +658,7 @@ impl<F: VfsFile> Vfs<F> {
                             InvalidationDetail::InvalidatesDb => invalidates_db = true,
                             InvalidationDetail::Some(invs) => all_invalidations.extend(&invs),
                         },
+                        DirectoryEntry::NestedWorkspace(workspace) => todo!(),
                         // TODO gitignore invalidation
                         DirectoryEntry::Directory(_) | DirectoryEntry::Gitignore(_) => (),
                     };
