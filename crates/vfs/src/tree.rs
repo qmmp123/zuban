@@ -24,17 +24,6 @@ pub enum Parent {
 }
 
 impl Parent {
-    pub(crate) fn with_dir<T>(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: impl FnOnce(&Entries) -> T,
-    ) -> T {
-        match self {
-            Self::Directory(dir) => callable(Directory::entries(vfs, &dir.upgrade().unwrap())),
-            Self::Workspace(w) => callable(&w.upgrade().unwrap().entries),
-        }
-    }
-
     pub fn maybe_dir(&self) -> Result<Arc<Directory>, &Weak<Workspace>> {
         match self {
             Self::Directory(dir) => Ok(dir.upgrade().unwrap()),

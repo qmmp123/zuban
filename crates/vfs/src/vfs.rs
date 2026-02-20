@@ -665,7 +665,7 @@ impl<F: VfsFile> Vfs<F> {
                     true
                 });
             };
-            parent.with_dir(&*self.handler, |in_dir| {
+            parent.with_entries(&*self.handler, |in_dir| {
                 if self
                     .handler
                     .is_unnecessary_invalidation(path, in_dir.search(replace_name).as_deref())
