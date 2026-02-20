@@ -1501,7 +1501,7 @@ impl Database {
             (None, "typing.pyi"),
             (
                 Some((
-                    Directory::entries(&*self.vfs.handler, &typeshed_dir),
+                    Directory::entries(&self.vfs, &typeshed_dir),
                     typeshed_dir_path,
                 )),
                 "__init__.pyi",
@@ -1518,7 +1518,7 @@ impl Database {
             ),
             (
                 Some((
-                    Directory::entries(&*self.vfs.handler, &collections_dir),
+                    Directory::entries(&self.vfs, &collections_dir),
                     col_dir_path,
                 )),
                 "__init__.pyi",

@@ -214,7 +214,7 @@ impl<'db> Iterator for FixtureModuleIterator<'db> {
         // Search for conftest.py
         if let Some(mut parent) = self.parent.take() {
             loop {
-                let result = parent.with_entries(&*self.db.vfs.handler, |entries| {
+                let result = parent.with_entries(&self.db.vfs, |entries| {
                     let imp = python_import(
                         self.db,
                         self.current_module,
@@ -252,7 +252,7 @@ impl<'db> Iterator for FixtureModuleIterator<'db> {
             }
         }
 
-        let pytest_folder_entries = Directory::entries(&*self.db.vfs.handler, &self.pytest_folder);
+        let pytest_folder_entries = Directory::entries(&self.db.vfs, &self.pytest_folder);
         self.pytest_fixture_modules
             .by_ref()
             .filter_map(|pytest_module_name| {

@@ -6,7 +6,7 @@ use std::{
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use utils::{MappedReadGuard, MappedWriteGuard, VecRwLockWrapper};
 
-use crate::{NormalizedPath, PathWithScheme, VfsHandler, Workspace};
+use crate::{NormalizedPath, PathWithScheme, Vfs, VfsHandler, Workspace, Workspaces};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileIndex(pub u32);
@@ -80,7 +80,7 @@ impl Parent {
         }
     }
 
-    pub fn with_entries<T>(&self, vfs: &dyn VfsHandler, callback: impl FnOnce(&Entries) -> T) -> T {
+    pub fn with_entries<T, X>(&self, vfs: &Vfs<X>, callback: impl FnOnce(&Entries) -> T) -> T {
         match self {
             Self::Directory(dir) => callback(Directory::entries(vfs, &dir.upgrade().unwrap())),
             Self::Workspace(workspace) => callback(&workspace.upgrade().unwrap().entries),
@@ -187,22 +187,14 @@ impl DirectoryEntry {
         }
     }
 
-    pub(crate) fn walk_entries(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: &mut impl FnMut(&Self) -> bool,
-    ) {
+    pub(crate) fn walk_entries<X>(&self, vfs: &Vfs<X>, callable: &mut impl FnMut(&Self) -> bool) {
         if !callable(self) {
             return;
         };
         self.walk_internal(vfs, &mut |_, entry| callable(entry))
     }
 
-    fn walk_internal(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: &mut impl FnMut(&Entries, &Self) -> bool,
-    ) {
+    fn walk_internal<X>(&self, vfs: &Vfs<X>, callable: &mut impl FnMut(&Entries, &Self) -> bool) {
         if let DirectoryEntry::Directory(dir) = self {
             let entries = Directory::entries(vfs, dir);
             for entry in entries.borrow().iter() {
@@ -269,7 +261,15 @@ impl Directory {
         path + &self.name
     }
 
-    pub fn entries<'x>(vfs: &dyn VfsHandler, dir: &'x Arc<Directory>) -> &'x Entries {
+    pub fn entries<'x, X>(vfs: &Vfs<X>, dir: &'x Arc<Directory>) -> &'x Entries {
+        Self::entries_with_workspaces(&*vfs.handler, &vfs.workspaces, dir)
+    }
+
+    pub(crate) fn entries_with_workspaces<'x>(
+        vfs: &dyn VfsHandler,
+        workspaces: &Workspaces,
+        dir: &'x Arc<Directory>,
+    ) -> &'x Entries {
         dir.entries.get_or_init(|| {
             vfs.read_and_watch_dir(
                 &dir.absolute_path(vfs).path,
@@ -313,12 +313,18 @@ impl Entries {
         Some(MappedReadGuard::map(borrow, |dir| &dir[pos]))
     }
 
-    pub(crate) fn search_path(&self, vfs: &dyn VfsHandler, path: &str) -> Option<DirOrFile> {
+    pub(crate) fn search_path(
+        &self,
+        vfs: &dyn VfsHandler,
+        workspaces: &Workspaces,
+        path: &str,
+    ) -> Option<DirOrFile> {
         let (name, rest) = vfs.split_off_folder(path);
         if let Some(entry) = self.search(name) {
             if let Some(rest) = rest {
                 if let DirectoryEntry::Directory(dir) = &*entry {
-                    return Directory::entries(vfs, dir).search_path(vfs, rest);
+                    return Directory::entries_with_workspaces(vfs, workspaces, dir)
+                        .search_path(vfs, workspaces, rest);
                 }
             } else {
                 return match &*entry {
@@ -485,9 +491,9 @@ impl Entries {
     }
 
     /// Walks the entries and aborts descending if the callable returns false
-    pub fn walk_entries(
+    pub fn walk_entries<X>(
         &self,
-        vfs: &dyn VfsHandler,
+        vfs: &Vfs<X>,
         callable: &mut impl FnMut(&Self, &DirectoryEntry) -> bool,
     ) {
         for entry in self.borrow().iter() {

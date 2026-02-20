@@ -368,7 +368,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
 
     fn add_namespace_completions(&mut self, namespace: &Namespace) {
         for dir in namespace.directories.iter() {
-            self.directory_entries_completions(Directory::entries(&*self.infos.db.vfs.handler, dir))
+            self.directory_entries_completions(Directory::entries(&self.infos.db.vfs, dir))
         }
     }
 
@@ -441,7 +441,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
         let (file_entry, is_package) = file.file_entry_and_is_package(db);
         if is_package && let Parent::Directory(dir) = &file_entry.parent {
             let dir = dir.upgrade().unwrap();
-            self.directory_entries_completions(Directory::entries(&*db.vfs.handler, &dir))
+            self.directory_entries_completions(Directory::entries(&db.vfs, &dir))
         }
     }
 

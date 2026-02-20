@@ -42,7 +42,7 @@ pub struct VfsPanicRecovery<T> {
     files: Vec<RecoveryFile<T>>,
 }
 
-pub struct Vfs<F: VfsFile> {
+pub struct Vfs<F> {
     pub handler: Box<dyn VfsHandler>,
     pub workspaces: Workspaces,
     pub files: InsertOnlyVec<FileState<F>>,
@@ -85,7 +85,7 @@ impl<F: VfsFile> Vfs<F> {
                 let parent_entries = match parent {
                     Parent::Directory(dir) => {
                         tmp = dir.upgrade().unwrap();
-                        Directory::entries(vfs_handler, &tmp)
+                        Directory::entries_with_workspaces(vfs_handler, workspaces, &tmp)
                     }
                     Parent::Workspace(w) => {
                         let w = w.upgrade().unwrap();
@@ -522,7 +522,7 @@ impl<F: VfsFile> Vfs<F> {
                         }
                     }
                     InMemoryKind::Gitignore(gitignore) => {
-                        gitignore.parent.with_entries(&*self.handler, |entries| {
+                        gitignore.parent.with_entries(self, |entries| {
                             if let Some(mut entry) = entries.search_mut(".gitignore") {
                                 *entry = DirectoryEntry::Gitignore(GitignoreFile::new(
                                     gitignore.parent.clone(),
@@ -540,7 +540,7 @@ impl<F: VfsFile> Vfs<F> {
                         self.invalidate_and_unload_in_memory_file(case_sensitive, file_index)
                     }
                     InMemoryKind::Gitignore(gitignore) => {
-                        gitignore.parent.with_entries(&*self.handler, |entries| {
+                        gitignore.parent.with_entries(self, |entries| {
                             entries.remove_name(".gitignore");
                         });
                         InvalidationResult::InvalidatedFiles
@@ -636,7 +636,7 @@ impl<F: VfsFile> Vfs<F> {
             // TODO handle path == workspace path
 
             let mut check_invalidations_for_dir_entry = |e: &DirectoryEntry| {
-                e.walk_entries(&*self.handler, &mut |entry| {
+                e.walk_entries(self, &mut |entry| {
                     match entry {
                         DirectoryEntry::File(f) => {
                             if let Some(file_index) = f.get_file_index() {
@@ -665,7 +665,7 @@ impl<F: VfsFile> Vfs<F> {
                     true
                 });
             };
-            parent.with_entries(&*self.handler, |in_dir| {
+            parent.with_entries(self, |in_dir| {
                 if self
                     .handler
                     .is_unnecessary_invalidation(path, in_dir.search(replace_name).as_deref())
@@ -687,7 +687,7 @@ impl<F: VfsFile> Vfs<F> {
                                 );
                             } else {
                                 tracing::debug!("Decided to replace {replace_name} in VFS");
-                                to_replace.walk_entries(&*self.handler, &mut |e| {
+                                to_replace.walk_entries(self, &mut |e| {
                                     check_invalidations_for_dir_entry(e);
                                     true
                                 });

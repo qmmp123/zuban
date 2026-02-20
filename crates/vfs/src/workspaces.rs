@@ -99,14 +99,14 @@ impl Workspaces {
             .map(|x| &x.entries)
     }
 
-    pub fn search_path(
+    pub(crate) fn search_path(
         &self,
         vfs: &dyn VfsHandler,
         case_sensitive: bool,
         path: &PathWithScheme,
     ) -> Option<DirOrFile> {
         self.strip_short_path_in_workspace(vfs, case_sensitive, path)
-            .and_then(|(workspace, rest)| workspace.entries.search_path(vfs, rest))
+            .and_then(|(workspace, rest)| workspace.entries.search_path(vfs, self, rest))
             .or_else(|| {
                 self.iter().find_map(|workspace| {
                     if workspace.kind == WorkspaceKind::Fallback
@@ -194,6 +194,7 @@ impl Workspaces {
                 Parent::Workspace(Arc::downgrade(&workspace)),
                 &workspace.entries,
                 vfs,
+                self,
                 rest,
                 code,
             );
@@ -242,10 +243,17 @@ impl Workspaces {
     // We intentionally use a &mut self here, because we want to avoid that the datastructures
     // inside are modified while we're cloning.
     pub(crate) fn clone_with_new_rcs(&mut self, vfs: &dyn VfsHandler) -> Self {
-        fn clone_inner_rcs(vfs: &dyn VfsHandler, dir: Directory) -> Arc<Directory> {
+        fn clone_inner_rcs(
+            vfs: &dyn VfsHandler,
+            workspaces: &Workspaces,
+            dir: Directory,
+        ) -> Arc<Directory> {
             // TODO not all entries need to be recalculated if it's not yet calculated
             let dir = Arc::new(dir);
-            for entry in Directory::entries(vfs, &dir).borrow_mut().iter_mut() {
+            for entry in Directory::entries_with_workspaces(vfs, workspaces, &dir)
+                .borrow_mut()
+                .iter_mut()
+            {
                 match entry {
                     DirectoryEntry::File(file) => {
                         let mut new_file = file.as_ref().clone();
@@ -256,7 +264,7 @@ impl Workspaces {
                     DirectoryEntry::Directory(inner_dir) => {
                         let mut new = inner_dir.as_ref().clone();
                         new.parent = Parent::Directory(Arc::downgrade(&dir));
-                        *inner_dir = clone_inner_rcs(vfs, new);
+                        *inner_dir = clone_inner_rcs(vfs, workspaces, new);
                     }
                     DirectoryEntry::NestedWorkspace(workspace) => todo!(),
                     DirectoryEntry::Gitignore(_) => (),
@@ -273,7 +281,7 @@ impl Workspaces {
                         debug_assert!(matches!(dir.parent, Parent::Workspace(_)));
                         let mut new_dir = dir.as_ref().clone();
                         new_dir.parent = Parent::Workspace(Arc::downgrade(&new_workspace));
-                        *dir = clone_inner_rcs(vfs, new_dir)
+                        *dir = clone_inner_rcs(vfs, &Workspaces::default(), new_dir)
                     }
                     DirectoryEntry::File(file) => {
                         debug_assert!(matches!(file.parent, Parent::Workspace(_)));
@@ -429,6 +437,7 @@ fn ensure_dirs_and_file(
     parent: Parent,
     entries: &Entries,
     vfs: &dyn VfsHandler,
+    workspaces: &Workspaces,
     path: &str,
     code: &str,
 ) -> AddedFile {
@@ -440,8 +449,9 @@ fn ensure_dirs_and_file(
                 DirectoryEntry::Directory(arc) => {
                     return ensure_dirs_and_file(
                         Parent::Directory(Arc::downgrade(arc)),
-                        Directory::entries(vfs, arc),
+                        Directory::entries_with_workspaces(vfs, workspaces, arc),
                         vfs,
+                        workspaces,
                         rest,
                         code,
                     );
@@ -457,8 +467,9 @@ fn ensure_dirs_and_file(
         let dir2 = Directory::new(parent, Box::from(name));
         let mut result = ensure_dirs_and_file(
             Parent::Directory(Arc::downgrade(&dir2)),
-            Directory::entries(vfs, &dir2),
+            Directory::entries_with_workspaces(vfs, workspaces, &dir2),
             vfs,
+            workspaces,
             rest,
             code,
         );

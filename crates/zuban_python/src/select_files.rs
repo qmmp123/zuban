@@ -179,7 +179,7 @@ impl<'db> FileSelector<'db> {
             if !not_yet_checked_globs.is_empty() {
                 self.added_file = false;
                 for entries in self.db.vfs.workspaces.entries_to_type_check() {
-                    entries.walk_entries(vfs_handler, &mut |in_dir, entry| {
+                    entries.walk_entries(&self.db.vfs, &mut |in_dir, entry| {
                         let path = match entry {
                             DirectoryEntry::File(file) => file.absolute_path(vfs_handler),
                             DirectoryEntry::Directory(dir) => dir.absolute_path(vfs_handler),
@@ -253,7 +253,7 @@ impl<'db> FileSelector<'db> {
     }
 
     fn handle_dir(&mut self, dir: &Arc<Directory>) {
-        self.handle_entries(Directory::entries(&*self.db.vfs.handler, dir))
+        self.handle_entries(Directory::entries(&self.db.vfs, dir))
     }
 
     fn handle_entries(&mut self, entries: &Entries) {

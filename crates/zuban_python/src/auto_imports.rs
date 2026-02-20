@@ -150,7 +150,7 @@ impl<'db> ImportFinder<'db> {
                 }
             }
             DirectoryEntry::Directory(dir) => self.find_importable_name_in_entries(
-                Directory::entries(&*self.db.vfs.handler, &dir),
+                Directory::entries(&self.db.vfs, &dir),
                 true,
                 add_submodules,
             ),
@@ -234,7 +234,7 @@ fn all_recursive_public_typeshed_file_entries(
                     if dir.name.starts_with('_') || dir.name.starts_with('@') {
                         return;
                     }
-                    recurse(db, found, Directory::entries(&*db.vfs.handler, dir))
+                    recurse(db, found, Directory::entries(&db.vfs, dir))
                 }
                 _ => (),
             }
@@ -512,10 +512,8 @@ impl TypeshedSymbols {
                             Parent::Directory(dir) => {
                                 let dir = dir.upgrade().unwrap();
                                 if entry.name.as_ref() == "__init__.pyi" {
-                                    Directory::entries(&*db.vfs.handler, &dir)
-                                        .borrow()
-                                        .iter()
-                                        .for_each(|dir_entry| {
+                                    Directory::entries(&db.vfs, &dir).borrow().iter().for_each(
+                                        |dir_entry| {
                                             let name = dir_entry.name();
                                             if name != "__init__.pyi" {
                                                 insert_symbol(
@@ -523,7 +521,8 @@ impl TypeshedSymbols {
                                                     name.trim_end_matches(".pyi"),
                                                 )
                                             }
-                                        })
+                                        },
+                                    )
                                 }
                             }
                             Parent::Workspace(_) => {
