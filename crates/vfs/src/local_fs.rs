@@ -9,7 +9,8 @@ use utils::FastHashSet;
 
 use crate::{
     AbsPath, Directory, DirectoryEntry, Entries, FileEntry, GitignoreFile, NormalizedPath,
-    NotifyEvent, Parent, PathWithScheme, VfsHandler, Workspace, tree::NestedWorkspace,
+    NotifyEvent, Parent, PathWithScheme, VfsHandler, Workspace,
+    tree::{DirEntries, NestedWorkspace},
 };
 
 const GLOBALLY_IGNORED_FOLDERS: [&str; 3] = ["site-packages", "node_modules", "__pycache__"];
@@ -415,14 +416,12 @@ impl ResolvedFileType {
                         absolute.path == workspace.root_path && absolute.scheme == workspace.scheme
                     }
                 }) {
-                    dbg!(dir.absolute_path(vfs));
-                    DirectoryEntry::NestedWorkspace(NestedWorkspace {
-                        name: dir.name,
-                        workspace: Arc::downgrade(workspace),
-                    })
-                } else {
-                    DirectoryEntry::Directory(Arc::new(dir))
+                    let result = dir
+                        .entries
+                        .set(DirEntries::NestedWorkspace(Arc::downgrade(workspace)));
+                    debug_assert!(result.is_ok());
                 }
+                DirectoryEntry::Directory(dir)
             }
         })
     }

@@ -153,7 +153,7 @@ impl Workspaces {
                     // paths are reachable.
                     rest = new_rest;
                     let entries = if let Some(dir) = current_dir.as_ref() {
-                        dir.entries.get()?
+                        dir.entries.get()?.expect()
                     } else {
                         &workspace.entries
                     };
@@ -467,7 +467,7 @@ fn ensure_dirs_and_file(
                 _ => unimplemented!("Dir overwrite of file; When does this happen?"),
             }
         };
-        let dir2 = Arc::new(Directory::new(parent, Box::from(name)));
+        let dir2 = Directory::new(parent, Box::from(name));
         let mut result = ensure_dirs_and_file(
             Parent::Directory(Arc::downgrade(&dir2)),
             Directory::entries_with_workspaces(vfs, workspaces, &dir2),

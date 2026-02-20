@@ -217,9 +217,15 @@ impl Clone for Entries {
 
 #[derive(Debug, Clone)]
 pub struct Directory {
-    pub(crate) entries: OnceLock<Entries>,
+    pub(crate) entries: OnceLock<DirEntries>,
     pub parent: Parent,
     pub name: Box<str>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DirEntries {
+    Entries(Entries),
+    NestedWorkspace(Weak<Workspace>),
 }
 
 #[derive(Debug)]
@@ -235,12 +241,12 @@ pub(crate) enum AddedKind {
 }
 
 impl Directory {
-    pub(crate) fn new(parent: Parent, name: Box<str>) -> Self {
-        Self {
+    pub(crate) fn new(parent: Parent, name: Box<str>) -> Arc<Self> {
+        Arc::new(Self {
             entries: Default::default(),
             parent,
             name,
-        }
+        })
     }
 
     pub fn absolute_path(&self, vfs: &dyn VfsHandler) -> PathWithScheme {
@@ -270,13 +276,15 @@ impl Directory {
         workspaces: &Workspaces,
         dir: &'x Arc<Directory>,
     ) -> &'x Entries {
-        dir.entries.get_or_init(|| {
-            vfs.read_and_watch_dir(
-                &*workspaces.items.read().unwrap(),
-                &dir.absolute_path(vfs).path,
-                Parent::Directory(Arc::downgrade(dir)),
-            )
-        })
+        dir.entries
+            .get_or_init(|| {
+                DirEntries::Entries(vfs.read_and_watch_dir(
+                    &*workspaces.items.read().unwrap(),
+                    &dir.absolute_path(vfs).path,
+                    Parent::Directory(Arc::downgrade(dir)),
+                ))
+            })
+            .expect()
     }
 }
 
@@ -420,9 +428,13 @@ impl Entries {
                 if let DirectoryEntry::Directory(dir) = &*entry
                     // We do not need to unload files if the entries inside the dir do not yet
                     // exist.
-                    && let Some(entries) = dir.entries.get()
+                    && let Some(dir_entries) = dir.entries.get()
                 {
-                    entries.unload_file(vfs, rest);
+                    match dir_entries {
+                        DirEntries::Entries(entries) => entries.unload_file(vfs, rest),
+                        // The other workspace is responsible for unloading
+                        DirEntries::NestedWorkspace(_) => (),
+                    }
                 }
             } else if matches!(*entry, DirectoryEntry::File(_)) {
                 drop(entry);
@@ -467,9 +479,13 @@ impl Entries {
                 DirectoryEntry::Directory(dir) => {
                     if let Some(rest) = rest
                         // Entries might not be loaded and therefore there's no dir to delete
-                        && let Some(entries) = dir.entries.get()
+                        && let Some(dir_entries) = dir.entries.get()
                     {
-                        entries.delete_directory(vfs, rest)
+                        match dir_entries {
+                            DirEntries::Entries(entries) => entries.delete_directory(vfs, rest),
+                            // The other workspace is responsible for the deletion
+                            DirEntries::NestedWorkspace(_) => Ok(()),
+                        }
                     } else {
                         drop(inner);
                         self.remove_name(name);
@@ -500,6 +516,19 @@ impl Entries {
         for entry in self.borrow().iter() {
             if callable(self, entry) {
                 entry.walk_internal(vfs, callable)
+            }
+        }
+    }
+}
+
+impl DirEntries {
+    pub(crate) fn expect(&self) -> &Entries {
+        match self {
+            DirEntries::Entries(entries) => &entries,
+            DirEntries::NestedWorkspace(weak) => {
+                let strong = weak.upgrade().unwrap();
+                let reference = &strong.entries as *const Entries;
+                unsafe { &*reference }
             }
         }
     }
