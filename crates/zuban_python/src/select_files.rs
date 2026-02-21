@@ -253,7 +253,10 @@ impl<'db> FileSelector<'db> {
     }
 
     fn handle_dir(&mut self, dir: &Arc<Directory>) {
-        self.handle_entries(Directory::entries(&self.db.vfs, dir))
+        // Nested workspaces are handled by checking the other workspaces
+        if !dir.is_nested_workspace() {
+            self.handle_entries(Directory::entries(&self.db.vfs, dir))
+        }
     }
 
     fn handle_entries(&mut self, entries: &Entries) {

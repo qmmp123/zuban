@@ -755,11 +755,12 @@ mod tests {
     #[test]
     fn test_read_file_only_once() {
         logging_config::setup_logging_for_tests();
-        let test_dir = test_utils::write_files_from_fixture(
-            r#"
+        for mypy_path in ["['src/inner', 'src']"] {
+            let fixture = format!(
+                r#"
             [file pyproject.toml]
             [tool.zuban]
-            mypy_path = ["src", "src/inner"]
+            mypy_path = {mypy_path}
 
             [file src/inner/m1.py]
             import m2
@@ -777,14 +778,18 @@ mod tests {
 
             [file src/inner/m2.py]
             class C: ...
-            "#,
-            false,
-        );
-        let diagnostics = diagnostics(Cli::parse_from([""]), test_dir.path());
+            "#
+            );
+            let test_dir = test_utils::write_files_from_fixture(&fixture, false);
+            let diagnostics = diagnostics(Cli::parse_from([""]), test_dir.path());
 
-        assert_eq!(
-            diagnostics,
-            ["m.py:1: error: \"int\" not callable  [operator]"]
-        );
+            assert_eq!(
+                diagnostics,
+                [
+                    "m1.py:12: error: Incompatible types in assignment (expression \
+                 has type \"int\", variable has type \"C\")  [assignment]"
+                ]
+            );
+        }
     }
 }

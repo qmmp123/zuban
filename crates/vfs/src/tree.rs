@@ -286,6 +286,10 @@ impl Directory {
             })
             .expect()
     }
+
+    pub fn is_nested_workspace(&self) -> bool {
+        matches!(self.entries.get(), Some(DirEntries::NestedWorkspace(_)))
+    }
 }
 
 impl Entries {

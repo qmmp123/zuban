@@ -728,8 +728,9 @@ mypy_path = ["src", "src/inner"]
 
 [file src/inner/m1.py]
 import m2
-from inner.m2 import C
-import src
+-- TODO currently this does not work for in-memory files, but it works if the files actually exist in the file system, see test_read_file_only_once
+from inner.m2 import C  # E: Cannot find implementation or library stub for module named "inner"
+import src  # E: Cannot find implementation or library stub for module named "src"
 
 a: m2.C = C()
 b: C = m2.C()
