@@ -573,12 +573,12 @@ mod tests {
         if cfg!(target_os = "windows") {
             assert_eq!(
                 d(),
-                ["src\\hello_zuban\\hello.py:3: error: \"int\" not callable  [operator]"]
+                ["hello_zuban\\hello.py:3: error: \"int\" not callable  [operator]"]
             );
         } else {
             assert_eq!(
                 d(),
-                ["src/hello_zuban/hello.py:3: error: \"int\" not callable  [operator]"]
+                ["hello_zuban/hello.py:3: error: \"int\" not callable  [operator]"]
             );
         }
     }

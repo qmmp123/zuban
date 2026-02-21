@@ -244,6 +244,8 @@ impl<'db> FileSelector<'db> {
                 let path = dir.relative_path(handler);
                 if !should_skip_dir_or_file(&self.db.project.flags, &path)
                     && !self.ignored_by_gitignore(|| dir.absolute_path(handler), true)
+                    // Nested workspaces are handled by checking the other workspaces
+                    && !dir.is_nested_workspace()
                 {
                     self.handle_dir(dir)
                 }
@@ -253,10 +255,7 @@ impl<'db> FileSelector<'db> {
     }
 
     fn handle_dir(&mut self, dir: &Arc<Directory>) {
-        // Nested workspaces are handled by checking the other workspaces
-        if !dir.is_nested_workspace() {
-            self.handle_entries(Directory::entries(&self.db.vfs, dir))
-        }
+        self.handle_entries(Directory::entries(&self.db.vfs, dir))
     }
 
     fn handle_entries(&mut self, entries: &Entries) {
