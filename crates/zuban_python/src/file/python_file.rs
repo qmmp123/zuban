@@ -739,7 +739,7 @@ impl<'db> PythonFile {
             };
             debug!(
                 "Did ignore issue for now: {}",
-                Diagnostic::new(i_s.db, self, &issue).as_string(&config)
+                Diagnostic::new(i_s.db, self, &issue).as_string(&config, None)
             );
             return;
         }
@@ -776,11 +776,11 @@ impl<'db> PythonFile {
         match self.issues.add_if_not_ignored(issue, maybe_ignored) {
             Ok(issue) => debug!(
                 "NEW ISSUE: {}",
-                Diagnostic::new(db, self, issue).as_string(&config)
+                Diagnostic::new(db, self, issue).as_string(&config, None)
             ),
             Err(issue) => debug!(
                 "New ignored issue: {}",
-                Diagnostic::new(db, self, &issue).as_string(&config)
+                Diagnostic::new(db, self, &issue).as_string(&config, None)
             ),
         }
     }

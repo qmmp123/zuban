@@ -31,11 +31,11 @@ fn with_exit_code(
     current_dir: String,
     typeshed_path: Option<Arc<NormalizedPath>>,
 ) -> ExitCode {
-    with_diagnostics_from_cli(cli, current_dir, typeshed_path, |diagnostics, config| {
+    with_diagnostics_from_cli(cli, &current_dir, typeshed_path, |diagnostics, config| {
         let stdout = std::io::stdout();
         for diagnostic in diagnostics.issues.iter() {
             diagnostic
-                .write_colored(&mut stdout.lock(), config)
+                .write_colored(&mut stdout.lock(), config, &current_dir)
                 .unwrap()
         }
         if config.error_summary {
@@ -55,14 +55,14 @@ fn with_exit_code(
 
 pub fn with_diagnostics_from_cli<T>(
     cli: Cli,
-    current_dir: String,
+    current_dir: &str,
     typeshed_path: Option<Arc<NormalizedPath>>,
     callback: impl FnOnce(Diagnostics, &DiagnosticConfig) -> T,
 ) -> anyhow::Result<T> {
     tracing::info!("Zuban version {}", env!("CARGO_PKG_VERSION"));
     tracing::info!("Checking in {current_dir}");
     let (mut project, diagnostic_config) =
-        project_from_cli(cli, &current_dir, typeshed_path, |name| std::env::var(name));
+        project_from_cli(cli, current_dir, typeshed_path, |name| std::env::var(name));
     let diagnostics = project.diagnostics();
     Ok(callback(diagnostics?, &diagnostic_config))
 }
@@ -130,7 +130,13 @@ mod tests {
         let mut diagnostics = diagnostics?
             .issues
             .iter()
-            .map(|d| d.as_string(&diagnostic_config))
+            .map(|d| {
+                let mut s = d.as_string(&diagnostic_config, Some(directory));
+                if cfg!(windows) {
+                    s = s.replace('\\', "/")
+                }
+                s
+            })
             .collect::<Vec<_>>();
         diagnostics.sort();
         Ok(diagnostics)
@@ -288,7 +294,7 @@ mod tests {
     fn test_environment() {
         logging_config::setup_logging_for_tests();
         // We intentionally also test that dirs with dashes are also checked.
-        let fixture = if cfg!(target_os = "windows") {
+        let fixture = if cfg!(windows) {
             r#"
             [file venv/Scripts/python.exe]
 
@@ -402,11 +408,11 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(
                 expect_not_found(&["", "/foo/zuban/undefined-path"]),
-                r"No Python files found to check for C:\foo\zuban\undefined-path"
+                r"No Python files found to check for C:/foo/zuban/undefined-path"
             );
             assert_eq!(
                 expect_not_found(&["", "/foo/zuban/undefined-path/*/baz/*"]),
-                r"No Python files found to check in C:\foo\zuban\undefined-path\*\baz\*"
+                r"No Python files found to check in C:/foo/zuban/undefined-path/*/baz/*"
             );
         } else {
             assert_eq!(
@@ -570,17 +576,10 @@ mod tests {
         );
         let d = || diagnostics(Cli::parse_from(vec![""]), test_dir.path());
 
-        if cfg!(target_os = "windows") {
-            assert_eq!(
-                d(),
-                ["hello_zuban\\hello.py:3: error: \"int\" not callable  [operator]"]
-            );
-        } else {
-            assert_eq!(
-                d(),
-                ["hello_zuban/hello.py:3: error: \"int\" not callable  [operator]"]
-            );
-        }
+        assert_eq!(
+            d(),
+            ["src/hello_zuban/hello.py:3: error: \"int\" not callable  [operator]"]
+        );
     }
 
     #[test]
@@ -724,8 +723,10 @@ mod tests {
             );
             assert_eq!(
                 d("pkg1/bar.py"),
-                ["bar.py:4: error: Cannot find implementation or library \
-                     stub for module named \"doesnotexist\"  [import-not-found]"]
+                [
+                    "pkg1/bar.py:4: error: Cannot find implementation or library \
+                     stub for module named \"doesnotexist\"  [import-not-found]"
+                ]
             );
         }
     }
@@ -786,7 +787,7 @@ mod tests {
             assert_eq!(
                 diagnostics,
                 [
-                    "m1.py:12: error: Incompatible types in assignment (expression \
+                    "src/inner/m1.py:12: error: Incompatible types in assignment (expression \
                  has type \"int\", variable has type \"C\")  [assignment]"
                 ]
             );

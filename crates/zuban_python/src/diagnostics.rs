@@ -2110,12 +2110,21 @@ impl<'db> Diagnostic<'db> {
         msg
     }
 
-    fn message_formatting_options(&self, config: &DiagnosticConfig) -> MessageFormattingInfos<'db> {
+    fn message_formatting_options(
+        &self,
+        config: &DiagnosticConfig,
+        current_dir: Option<&str>,
+    ) -> MessageFormattingInfos<'db> {
         let original_file = self.file.original_file(self.db);
-        let path = self
-            .db
-            .file_path(original_file.file_index)
-            .trim_start_matches(&***original_file.file_entry(self.db).parent.workspace_path());
+        let path = if let Some(current_dir) = current_dir {
+            self.db
+                .file_path(original_file.file_index)
+                .trim_start_matches(current_dir)
+        } else {
+            self.db
+                .file_path(original_file.file_index)
+                .trim_start_matches(&***original_file.file_entry(self.db).parent.workspace_path())
+        };
         let path = self
             .db
             .vfs
@@ -2149,8 +2158,8 @@ impl<'db> Diagnostic<'db> {
         }
     }
 
-    pub fn as_string(&self, config: &DiagnosticConfig) -> String {
-        let opts = self.message_formatting_options(config);
+    pub fn as_string(&self, config: &DiagnosticConfig, current_dir: Option<&str>) -> String {
+        let opts = self.message_formatting_options(config, current_dir);
         let fmt_line =
             |kind, error| format!("{}{}: {kind}: {error}", opts.path, opts.line_number_infos);
         let mut result = fmt_line(opts.kind, &opts.error);
@@ -2177,8 +2186,9 @@ impl<'db> Diagnostic<'db> {
         &self,
         writer: &mut dyn Write,
         config: &DiagnosticConfig,
+        current_dir: &str,
     ) -> std::io::Result<()> {
-        let opts = self.message_formatting_options(config);
+        let opts = self.message_formatting_options(config, Some(current_dir));
         let fmt_line = |writer: &mut dyn Write, kind: &str, error| {
             write!(writer, "{}{}: ", opts.path, opts.line_number_infos)?;
             if kind == "error" {
@@ -2307,7 +2317,7 @@ struct MessageFormattingInfos<'db> {
 
 impl std::fmt::Debug for Diagnostic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", &self.as_string(&DiagnosticConfig::default()))
+        write!(f, "{}", &self.as_string(&DiagnosticConfig::default(), None))
     }
 }
 

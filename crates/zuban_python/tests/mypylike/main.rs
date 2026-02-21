@@ -438,7 +438,7 @@ impl TestCase<'_, '_> {
                             return None;
                         }
                         (!is_parse_test || d.mypy_error_code() == "syntax").then(|| {
-                            let mut s = d.as_string(&diagnostic_config);
+                            let mut s = d.as_string(&diagnostic_config, None);
                             if s.starts_with("__main__.py:") {
                                 s = s.replace("__main__.py:", "__main__:");
                             }

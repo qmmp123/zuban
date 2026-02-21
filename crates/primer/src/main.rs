@@ -82,12 +82,12 @@ fn main() -> ExitCode {
         let cli = cli_args::Cli::parse_from(v);
         let result = zmypy::with_diagnostics_from_cli(
             cli,
-            pth,
+            &pth,
             Some(test_utils::typeshed_path()),
             |mut diagnostics, config| {
                 diagnostics.sort_issues_by_kind();
                 for diagnostic in diagnostics.issues.iter() {
-                    println!("{}", diagnostic.as_string(config))
+                    println!("{}", diagnostic.as_string(config, None))
                 }
                 file_count += diagnostics.checked_files;
                 issue_count += diagnostics.issues.len();
