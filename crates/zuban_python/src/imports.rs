@@ -345,7 +345,6 @@ pub fn python_import_with_needs_exact_case<'x>(
                         python_file_index = Some((file.clone(), file_index));
                     }
                 }
-                DirectoryEntry::NestedWorkspace(_) => (),
                 DirectoryEntry::MissingEntry { .. } | DirectoryEntry::Gitignore(_) => (),
             }
         }

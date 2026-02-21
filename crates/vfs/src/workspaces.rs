@@ -267,7 +267,6 @@ impl Workspaces {
                         new.parent = Parent::Directory(Arc::downgrade(&dir));
                         *inner_dir = clone_inner_rcs(vfs, workspaces, new);
                     }
-                    DirectoryEntry::NestedWorkspace(workspace) => todo!(),
                     DirectoryEntry::Gitignore(_) => (),
                 }
             }
@@ -290,7 +289,6 @@ impl Workspaces {
                         new_file.parent = Parent::Workspace(Arc::downgrade(&new_workspace));
                         *file = Arc::new(new_file);
                     }
-                    DirectoryEntry::NestedWorkspace(workspace) => todo!(),
                     DirectoryEntry::MissingEntry { .. } => (), // has no RCs
                     DirectoryEntry::Gitignore { .. } => (),    // has no interior mutability
                 }

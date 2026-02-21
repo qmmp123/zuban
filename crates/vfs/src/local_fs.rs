@@ -9,8 +9,7 @@ use utils::FastHashSet;
 
 use crate::{
     AbsPath, Directory, DirectoryEntry, Entries, FileEntry, GitignoreFile, NormalizedPath,
-    NotifyEvent, Parent, PathWithScheme, VfsHandler, Workspace,
-    tree::{DirEntries, NestedWorkspace},
+    NotifyEvent, Parent, PathWithScheme, VfsHandler, Workspace, tree::DirEntries,
 };
 
 const GLOBALLY_IGNORED_FOLDERS: [&str; 3] = ["site-packages", "node_modules", "__pycache__"];
