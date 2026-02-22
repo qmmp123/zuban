@@ -8,7 +8,11 @@ mod tree;
 mod vfs;
 mod workspaces;
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    path::{Component, Path},
+    sync::Arc,
+};
 
 use crossbeam_channel::Receiver;
 
@@ -124,5 +128,83 @@ pub trait VfsHandler: Sync + Send {
 
     fn parent_of_absolute_path<'path>(&self, path: &'path AbsPath) -> Option<&'path AbsPath> {
         Some(AbsPath::new(path.as_ref().parent()?.to_str().unwrap()))
+    }
+
+    fn path_relative_to(&self, from: &AbsPath, to: &Path) -> Option<String> {
+        path_relative_to(from, to, self.separator())
+    }
+}
+
+fn path_relative_to(from: &AbsPath, to: &Path, separator: char) -> Option<String> {
+    let mut from_it = from.as_ref().components().peekable();
+    let mut to_it = to.components().peekable();
+
+    // Roots must match
+    match (from_it.next(), to_it.next()) {
+        (Some(a), Some(b)) if a == b => {}
+        _ => return None,
+    }
+
+    // Find common prefix
+    loop {
+        match (from_it.peek(), to_it.peek()) {
+            (Some(a), Some(b)) if a == b => {
+                from_it.next();
+                to_it.next();
+            }
+            _ => break,
+        }
+    }
+
+    // Remaining components in `to` become `..`
+    let mut out = String::new();
+    for _ in to_it {
+        out.push_str("..");
+        out.push(separator);
+    }
+
+    // Remaining components in `to`
+    let mut needs_separator = false;
+    for c in from_it {
+        if let Component::Normal(name) = c {
+            if needs_separator {
+                out.push(separator);
+            }
+            out.push_str(name.to_str().unwrap());
+            needs_separator = true;
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    #[test]
+    fn test_path_relative_to() {
+        let abs = AbsPath::new("/foo/bar/baz");
+        let check = |s: &str| path_relative_to(abs, Path::new(s), '/');
+        assert_eq!(check("/foo/bar"), Some("baz".into()));
+        assert_eq!(check("/foo/bar/"), Some("baz".into()));
+        assert_eq!(check("/foo/"), Some("bar/baz".into()));
+        assert_eq!(check("/foo"), Some("bar/baz".into()));
+        assert_eq!(check("/"), Some("foo/bar/baz".into()));
+
+        assert_eq!(check("/bar"), Some("../foo/bar/baz".into()));
+        assert_eq!(check("/baz"), Some("../foo/bar/baz".into()));
+        assert_eq!(check("/foo/other"), Some("../bar/baz".into()));
+        assert_eq!(check("/foo/other/other2"), Some("../../bar/baz".into()));
+        assert_eq!(check("/foo/bar/other"), Some("../baz".into()));
+        assert_eq!(check("/foo/bar/other/other2"), Some("../../baz".into()));
+
+        // Edge cases
+        let root = AbsPath::new("/");
+        assert_eq!(path_relative_to(root, Path::new(""), '/'), None);
+        assert_eq!(path_relative_to(root, Path::new("/"), '/'), Some("".into()));
+        assert_eq!(
+            path_relative_to(root, Path::new("/foo"), '/'),
+            Some("../".into())
+        );
     }
 }

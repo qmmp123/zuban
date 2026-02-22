@@ -503,14 +503,28 @@ mod tests {
             "#
         );
         let test_dir = test_utils::write_files_from_fixture(&fixture, false);
+        let m1 = r#"m1.py:2: error: "int" not callable  [operator]"#;
+        let m2 = r#"../folder2/m2.py:2: error: "str" not callable  [operator]"#;
+        let all_issues = [m2, m1];
+
         let dir = &format!("{}/folder1", test_dir.path());
         let ds = diagnostics(Cli::parse_from([""]), dir);
-        // By default within a subfolder will only show the subfolder
-        //assert_eq!(ds, [r#"m1.py:1: error: "int" not callable  [operator]"#]);
+        // By default within a subfolder we still show all issues
+        assert_eq!(ds, all_issues);
 
-        // List all diagnostics, not just current file
+        // List all diagnostics, not just current file for ..
         let ds = diagnostics(Cli::parse_from(["", ".."]), dir);
-        //assert_eq!(ds, [r#"m1.py:1: error: "int" not callable  [operator]"#]);
+        assert_eq!(ds, all_issues);
+
+        // List only current dir diagnostics, for .
+        let ds = diagnostics(Cli::parse_from(["", "."]), dir);
+        assert_eq!(ds, [m1]);
+
+        // List only m2 diagnostics
+        let ds = diagnostics(Cli::parse_from(["", "../folder2"]), dir);
+        assert_eq!(ds, [m2]);
+        let ds = diagnostics(Cli::parse_from(["", "../folder2/m2.py"]), dir);
+        assert_eq!(ds, [m2]);
     }
 
     #[test]
