@@ -121,4 +121,8 @@ pub trait VfsHandler: Sync + Send {
     ) -> bool {
         false
     }
+
+    fn parent_of_absolute_path<'path>(&self, path: &'path AbsPath) -> Option<&'path AbsPath> {
+        Some(AbsPath::new(path.as_ref().parent()?.to_str().unwrap()))
+    }
 }

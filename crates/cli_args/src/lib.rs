@@ -10,7 +10,7 @@ use vfs::{AbsPath, SimpleLocalFS, VfsHandler};
 
 use clap::Parser;
 
-#[derive(Parser, Default)]
+#[derive(Parser, Default, Debug)]
 pub struct Cli {
     // Additional options that are not present in zmypy
     /// Choosing a mode sets the basic preset of flags. The default mode is typed, which is not
@@ -46,7 +46,7 @@ impl Cli {
     }
 }
 
-#[derive(Parser, Clone, Default)]
+#[derive(Parser, Clone, Default, Debug)]
 pub struct MypyCli {
     // Running code:
     /// Regular expression to match file names, directory names or paths which mypy should ignore
@@ -297,6 +297,7 @@ pub fn apply_flags(
     cli: Cli,
     current_dir: Arc<AbsPath>,
     config_path: Option<&AbsPath>,
+    most_probable_base: Arc<AbsPath>,
 ) {
     apply_flags_detailed(
         vfs_handler,
@@ -306,6 +307,7 @@ pub fn apply_flags(
         cli,
         current_dir,
         config_path,
+        most_probable_base,
     )
 }
 
@@ -317,6 +319,7 @@ pub fn apply_flags_detailed(
     cli: Cli,
     current_dir: Arc<AbsPath>,
     config_path: Option<&AbsPath>,
+    most_probable_base: Arc<AbsPath>,
 ) {
     if let Some(mode) = cli.mode {
         settings.mode = mode.into();
@@ -333,7 +336,11 @@ pub fn apply_flags_detailed(
         cli.mypy_options,
         current_dir,
         config_path,
-    )
+    );
+
+    settings
+        .mypy_path
+        .push(vfs_handler.normalize_rc_path(most_probable_base));
 }
 
 fn apply_mypy_flags(
@@ -456,8 +463,4 @@ fn apply_mypy_flags(
             .map(|e| &e.regex_str)
             .collect::<Vec<_>>()
     );
-
-    settings
-        .mypy_path
-        .push(vfs_handler.normalize_rc_path(current_dir));
 }

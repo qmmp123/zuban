@@ -5,12 +5,10 @@ use std::{path::Path, rc::Rc, sync::Arc};
 pub struct AbsPath(str);
 
 impl AbsPath {
-    /*
     pub(crate) fn new(x: &str) -> &Self {
         // SAFETY: `AbsPath` is repr(transparent) over `str`
         unsafe { std::mem::transmute(x) }
     }
-    */
 
     pub(crate) fn new_arc(x: Arc<str>) -> Arc<Self> {
         // SAFETY: `AbsPath` is repr(transparent) over `str`

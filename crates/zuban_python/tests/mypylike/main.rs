@@ -293,14 +293,16 @@ impl TestCase<'_, '_> {
             !self.name.ends_with("_no_empty") && self.file_name != "check-abstract";
 
         BASE_PATH.with(|base_path| {
+            let current_dir = NormalizedPath::arc_to_abs_path(base_path.clone());
             cli_args::apply_flags_detailed(
                 local_fs,
                 &mut settings,
                 &mut config,
                 &mut diagnostic_config,
                 flags.cli,
-                NormalizedPath::arc_to_abs_path(base_path.clone()),
+                current_dir.clone(),
                 None,
+                current_dir,
             );
         });
 

@@ -77,7 +77,7 @@ fn project_from_cli(
     let current_dir = local_fs.unchecked_abs_path(current_dir);
     let mut found = find_cli_config(
         &local_fs,
-        &current_dir,
+        current_dir.clone(),
         cli.mypy_options.config_file.as_deref(),
         // Set the default to not mypy compatible, at least for now
         cli.mode(),
@@ -99,6 +99,7 @@ fn project_from_cli(
         cli,
         current_dir,
         found.config_path.as_deref(),
+        found.most_probable_base,
     );
 
     (
@@ -449,6 +450,7 @@ mod tests {
             cli,
             current_dir.clone(),
             Some(current_dir.as_ref()),
+            current_dir.clone(),
         );
         let files: Vec<&str> = project_options
             .settings
@@ -483,6 +485,32 @@ mod tests {
                 ]
             )
         }
+    }
+
+    #[test]
+    fn test_relative_dirs_in_output() {
+        logging_config::setup_logging_for_tests();
+        let fixture = format!(
+            r#"
+            [file pyproject.toml]
+            [tool.zuban]
+            [file folder1/m1.py]
+            from folder2 import m2
+            1()
+            [file folder2/m2.py]
+            from folder1 import m1
+            ""()
+            "#
+        );
+        let test_dir = test_utils::write_files_from_fixture(&fixture, false);
+        let dir = &format!("{}/folder1", test_dir.path());
+        let ds = diagnostics(Cli::parse_from([""]), dir);
+        // By default within a subfolder will only show the subfolder
+        //assert_eq!(ds, [r#"m1.py:1: error: "int" not callable  [operator]"#]);
+
+        // List all diagnostics, not just current file
+        let ds = diagnostics(Cli::parse_from(["", ".."]), dir);
+        //assert_eq!(ds, [r#"m1.py:1: error: "int" not callable  [operator]"#]);
     }
 
     #[test]
@@ -788,7 +816,7 @@ mod tests {
                 diagnostics,
                 [
                     "src/inner/m1.py:12: error: Incompatible types in assignment (expression \
-                 has type \"int\", variable has type \"C\")  [assignment]"
+                     has type \"int\", variable has type \"C\")  [assignment]"
                 ]
             );
         }
