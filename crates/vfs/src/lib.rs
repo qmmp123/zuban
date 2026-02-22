@@ -69,8 +69,6 @@ pub trait VfsHandler: Sync + Send {
         result
     }
 
-    fn split_off_folder<'a>(&self, path: &'a str) -> (&'a str, Option<&'a str>);
-
     fn normalize_path<'s>(&self, path: &'s AbsPath) -> Cow<'s, NormalizedPath> {
         NormalizedPath::normalize(path)
     }
@@ -132,6 +130,40 @@ pub trait VfsHandler: Sync + Send {
 
     fn path_relative_to(&self, from: &AbsPath, to: &Path) -> Option<String> {
         path_relative_to(from, to, self.separator())
+    }
+
+    fn split_off_first_item<'a>(&self, path: &'a str) -> (&'a str, Option<&'a str>) {
+        let mut found = path.find(self.separator());
+        if cfg!(target_os = "windows") {
+            // Windows allows path with mixed separators
+            if let Some(found_slash) = path.find('/')
+                && found.is_none_or(|found| found <= found_slash)
+            {
+                found = Some(found_slash)
+            }
+        }
+        if let Some(pos) = found {
+            (&path[..pos], Some(&path[pos + 1..]))
+        } else {
+            (path, None)
+        }
+    }
+
+    fn split_off_last_item<'a>(&self, path: &'a str) -> (Option<&'a str>, &'a str) {
+        let mut found = path.rfind(self.separator());
+        if cfg!(target_os = "windows") {
+            // Windows allows path with mixed separators
+            if let Some(found_slash) = path.rfind('/')
+                && found.is_none_or(|found| found >= found_slash)
+            {
+                found = Some(found_slash)
+            }
+        }
+        if let Some(pos) = found {
+            (Some(&path[..pos]), &path[pos + 1..])
+        } else {
+            (None, path)
+        }
     }
 }
 

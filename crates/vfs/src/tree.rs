@@ -324,7 +324,7 @@ impl Entries {
         workspaces: &Workspaces,
         path: &str,
     ) -> Option<DirOrFile> {
-        let (name, rest) = vfs.split_off_folder(path);
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(entry) = self.search(name) {
             if let Some(rest) = rest {
                 if let DirectoryEntry::Directory(dir) = &*entry {
@@ -416,7 +416,7 @@ impl Entries {
     }
 
     pub(crate) fn unload_file(&self, vfs: &dyn VfsHandler, path: &str) {
-        let (name, rest) = vfs.split_off_folder(path);
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(entry) = self.search(name) {
             if let Some(rest) = rest {
                 if let DirectoryEntry::Directory(dir) = &*entry
@@ -467,7 +467,7 @@ impl Entries {
     }
 
     pub(crate) fn delete_directory(&self, vfs: &dyn VfsHandler, path: &str) -> Result<(), String> {
-        let (name, rest) = vfs.split_off_folder(path);
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(inner) = self.search(name) {
             match &*inner {
                 DirectoryEntry::Directory(dir) => {

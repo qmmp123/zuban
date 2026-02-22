@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn test_read_file_only_once() {
         logging_config::setup_logging_for_tests();
-        for mypy_path in ["['src/inner', 'src']"] {
+        for mypy_path in ["['src/inner', 'src']", "['src', 'src/inner']"] {
             let fixture = format!(
                 r#"
             [file pyproject.toml]

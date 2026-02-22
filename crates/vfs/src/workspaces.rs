@@ -8,7 +8,7 @@ use utils::{OwnedMappedReadGuard, match_case};
 use crate::{
     AbsPath, DirOrFile, Directory, DirectoryEntry, NormalizedPath, Parent, PathWithScheme,
     VfsHandler,
-    tree::{AddedFile, Entries},
+    tree::{AddedFile, DirEntries, Entries},
     vfs::Scheme,
 };
 
@@ -145,7 +145,7 @@ impl Workspaces {
             let mut rest = rest?;
             let mut current_dir: Option<Arc<Directory>> = None;
             loop {
-                let (name, new_rest) = vfs.split_off_folder(rest);
+                let (name, new_rest) = vfs.split_off_first_item(rest);
                 if let Some(new_rest) = new_rest {
                     // We generally return None in all cases where the nesting of the path is
                     // deeper than the current VFS. This is fine for invalidation, since
@@ -392,6 +392,25 @@ impl Workspace {
             Parent::Workspace(Arc::downgrade(&workspace)),
         );
         *workspace.entries.borrow_mut() = std::mem::take(&mut new_entries.borrow_mut());
+
+        // Workspaces are added as nested workspaces already for workspaces that are contained
+        // within this one. But this workspace could be contained by another one, check for that
+        // here.
+        if !workspaces.is_empty()
+            && let (Some(folder), name) = vfs.split_off_last_item(&workspace.root_path)
+        {
+            for old in workspaces {
+                if ***old.root_path == *folder
+                    && let Some(dir_entry) = old.entries.search(name)
+                    && let DirectoryEntry::Directory(dir) = &*dir_entry
+                {
+                    let result = dir
+                        .entries
+                        .set(DirEntries::NestedWorkspace(Arc::downgrade(&workspace)));
+                    debug_assert!(result.is_ok());
+                }
+            }
+        }
         workspace
     }
 
@@ -442,7 +461,7 @@ fn ensure_dirs_and_file(
     path: &str,
     code: &str,
 ) -> AddedFile {
-    let (name, rest) = vfs.split_off_folder(path);
+    let (name, rest) = vfs.split_off_first_item(path);
     if let Some(rest) = rest {
         let mut invs = Default::default();
         if let Some(x) = entries.search(name) {
@@ -490,8 +509,8 @@ fn strip_path_prefix<'x>(
 ) -> Option<&'x str> {
     let mut to_strip: &str = to_strip;
     loop {
-        let (folder1, rest) = vfs.split_off_folder(path);
-        let (folder2, rest_to_strip) = vfs.split_off_folder(to_strip);
+        let (folder1, rest) = vfs.split_off_first_item(path);
+        let (folder2, rest_to_strip) = vfs.split_off_first_item(to_strip);
         if !match_case(case_sensitive, folder1, folder2) {
             return None;
         }

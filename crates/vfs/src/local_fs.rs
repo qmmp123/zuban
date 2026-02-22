@@ -164,23 +164,6 @@ impl<T: Fn(PathWithScheme) + Sync + Send> VfsHandler for LocalFS<T> {
         self.watcher.as_ref().map(|(_, r)| r)
     }
 
-    fn split_off_folder<'a>(&self, path: &'a str) -> (&'a str, Option<&'a str>) {
-        let mut found = path.find(self.separator());
-        if cfg!(target_os = "windows") {
-            // Windows allows path with mixed separators
-            if let Some(found_slash) = path.find('/')
-                && found.is_none_or(|found| found <= found_slash)
-            {
-                found = Some(found_slash)
-            }
-        }
-        if let Some(pos) = found {
-            (&path[..pos], Some(&path[pos + 1..]))
-        } else {
-            (path, None)
-        }
-    }
-
     fn on_invalidated_in_memory_file(&self, path: PathWithScheme) {
         if let Some(callback) = self.on_invalidated_in_memory_file.as_ref() {
             callback(path)
