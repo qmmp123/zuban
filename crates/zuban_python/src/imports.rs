@@ -60,7 +60,7 @@ impl ImportResult {
                 original_file,
                 ns.directories
                     .iter()
-                    .map(|d| Directory::entries(&*db.vfs.handler, d)),
+                    .map(|d| Directory::entries(&db.vfs, d)),
                 name,
             ),
             Self::PyTypedMissing => unreachable!(),
@@ -214,7 +214,7 @@ pub fn namespace_import_with_unloaded_file(
         namespace
             .directories
             .iter()
-            .map(|d| Directory::entries(&*db.vfs.handler, d)),
+            .map(|d| Directory::entries(&db.vfs, d)),
         name,
     )
     .or_else(|| {
@@ -241,7 +241,7 @@ pub fn namespace_import_with_unloaded_file(
         loop {
             match parent.maybe_dir() {
                 Ok(dir) => {
-                    if Directory::entries(&*db.vfs.handler, &dir)
+                    if Directory::entries(&db.vfs, &dir)
                         .search("py.typed")
                         .is_some()
                         || dir.name.ends_with(STUBS_SUFFIX)
@@ -313,7 +313,7 @@ pub fn python_import_with_needs_exact_case<'x>(
                         if let Some(file_index) = result {
                             if needs_py_typed
                                 && !from_file.flags(db).follow_untyped_imports
-                                && Directory::entries(&*db.vfs.handler, dir2)
+                                && Directory::entries(&db.vfs, dir2)
                                     .search("py.typed")
                                     .is_none()
                             {
@@ -428,7 +428,7 @@ fn load_init_file(
     content: &Arc<Directory>,
     from_file: FileIndex,
 ) -> Option<FileIndex> {
-    let entries = Directory::entries(&*db.vfs.handler, content);
+    let entries = Directory::entries(&db.vfs, content);
     let mut found_py = None;
     for child in &entries.iter() {
         if let DirectoryEntry::File(entry) = child {

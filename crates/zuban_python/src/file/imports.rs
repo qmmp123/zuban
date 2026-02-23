@@ -399,10 +399,7 @@ fn sub_module_import(
         Parent::Directory(dir) => python_import_with_needs_exact_case(
             db,
             in_file,
-            std::iter::once((
-                Directory::entries(&*db.vfs.handler, &dir.upgrade().unwrap()),
-                false,
-            )),
+            std::iter::once((Directory::entries(&db.vfs, &dir.upgrade().unwrap()), false)),
             name,
             true,
             true,
@@ -433,7 +430,7 @@ fn in_partial_stubs(db: &Database, file_entry: &FileEntry) -> bool {
         // partial is only relevant for -stubs, otherwise we don't really care.
         return false;
     }
-    Directory::entries(&*db.vfs.handler, &dir)
+    Directory::entries(&db.vfs, &dir)
         .search("py.typed")
         .is_some_and(|entry| match &*entry {
             // TODO we are currently never invalidating this file, when it changes

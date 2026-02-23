@@ -540,13 +540,12 @@ impl<'db> PythonFile {
             let file_entry = self.file_entry(db);
             let (name, parent_dir) = name_and_parent_dir(file_entry, false);
             if let Some(py_name) = file_entry.name.strip_suffix("i")
-                && let Some(file_entry) =
-                    file_entry.parent.with_entries(&*db.vfs.handler, |entries| {
-                        match &*entries.search(py_name)? {
-                            DirectoryEntry::File(f) => Some(f.clone()),
-                            _ => None,
-                        }
-                    })
+                && let Some(file_entry) = file_entry.parent.with_entries(&db.vfs, |entries| {
+                    match &*entries.search(py_name)? {
+                        DirectoryEntry::File(f) => Some(f.clone()),
+                        _ => None,
+                    }
+                })
             {
                 return db.load_file_index_from_workspace(&file_entry, false);
             }
@@ -570,12 +569,12 @@ impl<'db> PythonFile {
         let (name, parent_dir) = name_and_parent_dir(file_entry, false);
         let py_name = format!("{}.pyi", file_entry.name.strip_suffix(".py")?);
         let file_index = if let Some(file_entry) =
-            file_entry.parent.with_entries(&*db.vfs.handler, |entries| {
-                match &*entries.search(&py_name)? {
+            file_entry
+                .parent
+                .with_entries(&db.vfs, |entries| match &*entries.search(&py_name)? {
                     DirectoryEntry::File(f) => Some(f.clone()),
                     _ => None,
-                }
-            }) {
+                }) {
             db.load_file_index_from_workspace(&file_entry, false)?
         } else {
             match ImportResult::import_stub_for_non_stub_package(db, self, parent_dir, name)? {
@@ -740,7 +739,7 @@ impl<'db> PythonFile {
             };
             debug!(
                 "Did ignore issue for now: {}",
-                Diagnostic::new(i_s.db, self, &issue).as_string(&config)
+                Diagnostic::new(i_s.db, self, &issue).as_string(&config, None)
             );
             return;
         }
@@ -777,11 +776,11 @@ impl<'db> PythonFile {
         match self.issues.add_if_not_ignored(issue, maybe_ignored) {
             Ok(issue) => debug!(
                 "NEW ISSUE: {}",
-                Diagnostic::new(db, self, issue).as_string(&config)
+                Diagnostic::new(db, self, issue).as_string(&config, None)
             ),
             Err(issue) => debug!(
                 "New ignored issue: {}",
-                Diagnostic::new(db, self, &issue).as_string(&config)
+                Diagnostic::new(db, self, &issue).as_string(&config, None)
             ),
         }
     }

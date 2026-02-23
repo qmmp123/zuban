@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, sync::Arc};
+use std::{collections::HashMap, io::Write, path::Path, sync::Arc};
 
 use colored::{ColoredString, Colorize as _};
 use config::DiagnosticConfig;
@@ -2110,18 +2110,26 @@ impl<'db> Diagnostic<'db> {
         msg
     }
 
-    fn message_formatting_options(&self, config: &DiagnosticConfig) -> MessageFormattingInfos<'db> {
+    fn message_formatting_options(
+        &self,
+        config: &DiagnosticConfig,
+        current_dir: Option<&str>,
+    ) -> MessageFormattingInfos {
         let original_file = self.file.original_file(self.db);
-        let path = self
-            .db
-            .file_path(original_file.file_index)
-            .trim_start_matches(&***original_file.file_entry(self.db).parent.workspace_path());
-        let path = self
-            .db
-            .vfs
-            .handler
-            .strip_separator_prefix(path)
-            .unwrap_or(path);
+        let abs = self.db.file_path(original_file.file_index);
+        let path = if let Some(current_dir) = current_dir {
+            self.db
+                .vfs
+                .handler
+                .path_relative_to(abs, Path::new(current_dir))
+        } else {
+            let to = original_file.file_entry(self.db).parent.workspace_path();
+            self.db
+                .vfs
+                .handler
+                .path_relative_to(abs, to.as_ref().as_ref())
+        }
+        .unwrap_or_else(|| abs.to_string());
         let mut additional_notes = vec![];
         let error = self.message_with_notes(&mut additional_notes);
 
@@ -2149,8 +2157,8 @@ impl<'db> Diagnostic<'db> {
         }
     }
 
-    pub fn as_string(&self, config: &DiagnosticConfig) -> String {
-        let opts = self.message_formatting_options(config);
+    pub fn as_string(&self, config: &DiagnosticConfig, current_dir: Option<&str>) -> String {
+        let opts = self.message_formatting_options(config, current_dir);
         let fmt_line =
             |kind, error| format!("{}{}: {kind}: {error}", opts.path, opts.line_number_infos);
         let mut result = fmt_line(opts.kind, &opts.error);
@@ -2177,8 +2185,9 @@ impl<'db> Diagnostic<'db> {
         &self,
         writer: &mut dyn Write,
         config: &DiagnosticConfig,
+        current_dir: &str,
     ) -> std::io::Result<()> {
-        let opts = self.message_formatting_options(config);
+        let opts = self.message_formatting_options(config, Some(current_dir));
         let fmt_line = |writer: &mut dyn Write, kind: &str, error| {
             write!(writer, "{}{}: ", opts.path, opts.line_number_infos)?;
             if kind == "error" {
@@ -2297,17 +2306,17 @@ fn highlight_quote_groups(out: &mut dyn Write, msg: &str) -> std::io::Result<()>
     Ok(())
 }
 
-struct MessageFormattingInfos<'db> {
+struct MessageFormattingInfos {
     error: String,
     additional_notes: Vec<String>,
     kind: &'static str,
-    path: &'db str,
+    path: String,
     line_number_infos: String,
 }
 
 impl std::fmt::Debug for Diagnostic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", &self.as_string(&DiagnosticConfig::default()))
+        write!(f, "{}", &self.as_string(&DiagnosticConfig::default(), None))
     }
 }
 
