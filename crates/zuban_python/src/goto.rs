@@ -96,7 +96,7 @@ impl<'db> PositionalDocument<'db, GotoNode<'db>> {
             name,
             kind,
             &mut ResultContext::Unknown,
-            &|_issue| (),
+            &|_issue| false,
             &|_t_of_attr_error| (),
         )
     }
@@ -838,7 +838,7 @@ impl<'db, C: FnMut(Name<'db, '_>) -> T, T> ReferencesResolver<'db, C, T> {
             }
         };
         for entries in workspaces_entries {
-            entries.walk_entries(&*db.vfs.handler, &mut |_, dir_entry| {
+            entries.walk_entries(&db.vfs, &mut |_, dir_entry| {
                 if let DirectoryEntry::File(file) = dir_entry
                     && (is_file_with_python_ending(&file.name)
                         // We only want to check Python files, but loaded notebooks sometimes have
@@ -1111,6 +1111,7 @@ fn type_to_name<'db>(i_s: &InferenceState<'db, '_>, t: &Type, add: &mut impl FnM
             )))
         }
         Type::Never(_) => (),
+        Type::TypeForm(tf) => type_to_name(i_s, tf, add),
     }
 }
 

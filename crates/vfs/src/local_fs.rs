@@ -9,7 +9,7 @@ use utils::FastHashSet;
 
 use crate::{
     AbsPath, Directory, DirectoryEntry, Entries, FileEntry, GitignoreFile, NormalizedPath,
-    NotifyEvent, Parent, PathWithScheme, VfsHandler,
+    NotifyEvent, Parent, PathWithScheme, VfsHandler, Workspace, tree::DirEntries,
 };
 
 const GLOBALLY_IGNORED_FOLDERS: [&str; 3] = ["site-packages", "node_modules", "__pycache__"];
@@ -43,7 +43,12 @@ impl<T: Fn(PathWithScheme) + Sync + Send> VfsHandler for LocalFS<T> {
         result.ok()
     }
 
-    fn read_and_watch_dir(&self, path: &str, parent: Parent) -> Entries {
+    fn read_and_watch_dir(
+        &self,
+        workspaces: &[Arc<Workspace>],
+        path: &str,
+        parent: Parent,
+    ) -> Entries {
         let trace_err = |from, e: std::io::Error| match e.kind() {
             // Not found is a very ususal and expected thing so we lower the severity
             // here.
@@ -102,7 +107,9 @@ impl<T: Fn(PathWithScheme) + Sync + Send> VfsHandler for LocalFS<T> {
                                 }
                                 continue;
                             }
-                            if let Some(entry) = new.into_dir_entry(parent.clone(), name) {
+                            if let Some(entry) =
+                                new.into_dir_entry(workspaces, self, parent.clone(), name)
+                            {
                                 entries.push(entry)
                             }
                         }
@@ -122,6 +129,7 @@ impl<T: Fn(PathWithScheme) + Sync + Send> VfsHandler for LocalFS<T> {
 
     fn read_and_watch_entry(
         &self,
+        workspaces: &[Arc<Workspace>],
         path: &str,
         parent: Parent,
         replace_name: &str,
@@ -149,28 +157,11 @@ impl<T: Fn(PathWithScheme) + Sync + Send> VfsHandler for LocalFS<T> {
             self.watch(path);
             ResolvedFileType::File
         };
-        resolved.into_dir_entry(parent, replace_name)
+        resolved.into_dir_entry(workspaces, self, parent, replace_name)
     }
 
     fn notify_receiver(&self) -> Option<&Receiver<NotifyEvent>> {
         self.watcher.as_ref().map(|(_, r)| r)
-    }
-
-    fn split_off_folder<'a>(&self, path: &'a str) -> (&'a str, Option<&'a str>) {
-        let mut found = path.find(self.separator());
-        if cfg!(target_os = "windows") {
-            // Windows allows path with mixed separators
-            if let Some(found_slash) = path.find('/')
-                && found.is_none_or(|found| found <= found_slash)
-            {
-                found = Some(found_slash)
-            }
-        }
-        if let Some(pos) = found {
-            (&path[..pos], Some(&path[pos + 1..]))
-        } else {
-            (path, None)
-        }
     }
 
     fn on_invalidated_in_memory_file(&self, path: PathWithScheme) {
@@ -383,6 +374,8 @@ enum ResolvedFileType {
 impl ResolvedFileType {
     fn into_dir_entry<N: Into<Box<str>> + AsRef<str>>(
         self,
+        workspaces: &[Arc<Workspace>],
+        vfs: &dyn VfsHandler,
         parent: Parent,
         name: N,
     ) -> Option<DirectoryEntry> {
@@ -396,7 +389,21 @@ impl ResolvedFileType {
         Some(match self {
             ResolvedFileType::File => DirectoryEntry::File(FileEntry::new(parent, name.into())),
             ResolvedFileType::Directory => {
-                DirectoryEntry::Directory(Directory::new(parent, name.into()))
+                let dir = Directory::new(parent, name.into());
+                if let Some(workspace) = workspaces.iter().find(|workspace| {
+                    // Checking ends_with first is a performance optimization to avoid creating a
+                    // lot of paths.
+                    workspace.root_path.ends_with(&*dir.name) && {
+                        let absolute = dir.absolute_path(vfs);
+                        absolute.path == workspace.root_path && absolute.scheme == workspace.scheme
+                    }
+                }) {
+                    let result = dir
+                        .entries
+                        .set(DirEntries::NestedWorkspace(Arc::downgrade(workspace)));
+                    debug_assert!(result.is_ok());
+                }
+                DirectoryEntry::Directory(dir)
             }
         })
     }

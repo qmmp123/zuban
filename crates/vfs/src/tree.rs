@@ -6,7 +6,7 @@ use std::{
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use utils::{MappedReadGuard, MappedWriteGuard, VecRwLockWrapper};
 
-use crate::{NormalizedPath, PathWithScheme, VfsHandler, Workspace};
+use crate::{NormalizedPath, PathWithScheme, Vfs, VfsHandler, Workspace, Workspaces};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileIndex(pub u32);
@@ -24,17 +24,6 @@ pub enum Parent {
 }
 
 impl Parent {
-    pub(crate) fn with_dir<T>(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: impl FnOnce(&Entries) -> T,
-    ) -> T {
-        match self {
-            Self::Directory(dir) => callable(Directory::entries(vfs, &dir.upgrade().unwrap())),
-            Self::Workspace(w) => callable(&w.upgrade().unwrap().entries),
-        }
-    }
-
     pub fn maybe_dir(&self) -> Result<Arc<Directory>, &Weak<Workspace>> {
         match self {
             Self::Directory(dir) => Ok(dir.upgrade().unwrap()),
@@ -91,7 +80,7 @@ impl Parent {
         }
     }
 
-    pub fn with_entries<T>(&self, vfs: &dyn VfsHandler, callback: impl FnOnce(&Entries) -> T) -> T {
+    pub fn with_entries<T, X>(&self, vfs: &Vfs<X>, callback: impl FnOnce(&Entries) -> T) -> T {
         match self {
             Self::Directory(dir) => callback(Directory::entries(vfs, &dir.upgrade().unwrap())),
             Self::Workspace(workspace) => callback(&workspace.upgrade().unwrap().entries),
@@ -190,22 +179,14 @@ impl DirectoryEntry {
         }
     }
 
-    pub(crate) fn walk_entries(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: &mut impl FnMut(&Self) -> bool,
-    ) {
+    pub(crate) fn walk_entries<X>(&self, vfs: &Vfs<X>, callable: &mut impl FnMut(&Self) -> bool) {
         if !callable(self) {
             return;
         };
         self.walk_internal(vfs, &mut |_, entry| callable(entry))
     }
 
-    fn walk_internal(
-        &self,
-        vfs: &dyn VfsHandler,
-        callable: &mut impl FnMut(&Entries, &Self) -> bool,
-    ) {
+    fn walk_internal<X>(&self, vfs: &Vfs<X>, callable: &mut impl FnMut(&Entries, &Self) -> bool) {
         if let DirectoryEntry::Directory(dir) = self {
             let entries = Directory::entries(vfs, dir);
             for entry in entries.borrow().iter() {
@@ -228,9 +209,15 @@ impl Clone for Entries {
 
 #[derive(Debug, Clone)]
 pub struct Directory {
-    pub(crate) entries: OnceLock<Entries>,
+    pub(crate) entries: OnceLock<DirEntries>,
     pub parent: Parent,
     pub name: Box<str>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DirEntries {
+    Entries(Entries),
+    NestedWorkspace(Weak<Workspace>),
 }
 
 #[derive(Debug)]
@@ -272,13 +259,28 @@ impl Directory {
         path + &self.name
     }
 
-    pub fn entries<'x>(vfs: &dyn VfsHandler, dir: &'x Arc<Directory>) -> &'x Entries {
-        dir.entries.get_or_init(|| {
-            vfs.read_and_watch_dir(
-                &dir.absolute_path(vfs).path,
-                Parent::Directory(Arc::downgrade(dir)),
-            )
-        })
+    pub fn entries<'x, X>(vfs: &Vfs<X>, dir: &'x Arc<Directory>) -> &'x Entries {
+        Self::entries_with_workspaces(&*vfs.handler, &vfs.workspaces, dir)
+    }
+
+    pub(crate) fn entries_with_workspaces<'x>(
+        vfs: &dyn VfsHandler,
+        workspaces: &Workspaces,
+        dir: &'x Arc<Directory>,
+    ) -> &'x Entries {
+        dir.entries
+            .get_or_init(|| {
+                DirEntries::Entries(vfs.read_and_watch_dir(
+                    &*workspaces.items.read().unwrap(),
+                    &dir.absolute_path(vfs).path,
+                    Parent::Directory(Arc::downgrade(dir)),
+                ))
+            })
+            .expect()
+    }
+
+    pub fn is_nested_workspace(&self) -> bool {
+        matches!(self.entries.get(), Some(DirEntries::NestedWorkspace(_)))
     }
 }
 
@@ -316,19 +318,24 @@ impl Entries {
         Some(MappedReadGuard::map(borrow, |dir| &dir[pos]))
     }
 
-    pub(crate) fn search_path(&self, vfs: &dyn VfsHandler, path: &str) -> Option<DirOrFile> {
-        let (name, rest) = vfs.split_off_folder(path);
+    pub(crate) fn search_path(
+        &self,
+        vfs: &dyn VfsHandler,
+        workspaces: &Workspaces,
+        path: &str,
+    ) -> Option<DirOrFile> {
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(entry) = self.search(name) {
             if let Some(rest) = rest {
                 if let DirectoryEntry::Directory(dir) = &*entry {
-                    return Directory::entries(vfs, dir).search_path(vfs, rest);
+                    return Directory::entries_with_workspaces(vfs, workspaces, dir)
+                        .search_path(vfs, workspaces, rest);
                 }
             } else {
                 return match &*entry {
                     DirectoryEntry::File(f) => Some(DirOrFile::File(f.clone())),
-                    DirectoryEntry::MissingEntry(_) => None,
                     DirectoryEntry::Directory(d) => Some(DirOrFile::Dir(d.clone())),
-                    DirectoryEntry::Gitignore(_) => None,
+                    DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => None,
                 };
             }
         }
@@ -375,9 +382,11 @@ impl Entries {
                     *entry = DirectoryEntry::File(file_entry.clone());
                     file_entry
                 }
-                DirectoryEntry::Directory(..) => unimplemented!(
-                    "What happens when we want to write a file on top of a directory? When does this happen?"
-                ),
+                DirectoryEntry::Directory(..) => {
+                    unimplemented!(
+                        "What happens when we want to write a file on top of a directory? When does this happen?"
+                    )
+                }
                 DirectoryEntry::Gitignore(_) => {
                     let g = new_gitignore();
                     *entry = DirectoryEntry::Gitignore(g.clone());
@@ -407,15 +416,19 @@ impl Entries {
     }
 
     pub(crate) fn unload_file(&self, vfs: &dyn VfsHandler, path: &str) {
-        let (name, rest) = vfs.split_off_folder(path);
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(entry) = self.search(name) {
             if let Some(rest) = rest {
                 if let DirectoryEntry::Directory(dir) = &*entry
                     // We do not need to unload files if the entries inside the dir do not yet
                     // exist.
-                    && let Some(entries) = dir.entries.get()
+                    && let Some(dir_entries) = dir.entries.get()
                 {
-                    entries.unload_file(vfs, rest);
+                    match dir_entries {
+                        DirEntries::Entries(entries) => entries.unload_file(vfs, rest),
+                        // The other workspace is responsible for unloading
+                        DirEntries::NestedWorkspace(_) => (),
+                    }
                 }
             } else if matches!(*entry, DirectoryEntry::File(_)) {
                 drop(entry);
@@ -454,15 +467,19 @@ impl Entries {
     }
 
     pub(crate) fn delete_directory(&self, vfs: &dyn VfsHandler, path: &str) -> Result<(), String> {
-        let (name, rest) = vfs.split_off_folder(path);
+        let (name, rest) = vfs.split_off_first_item(path);
         if let Some(inner) = self.search(name) {
             match &*inner {
                 DirectoryEntry::Directory(dir) => {
                     if let Some(rest) = rest
                         // Entries might not be loaded and therefore there's no dir to delete
-                        && let Some(entries) = dir.entries.get()
+                        && let Some(dir_entries) = dir.entries.get()
                     {
-                        entries.delete_directory(vfs, rest)
+                        match dir_entries {
+                            DirEntries::Entries(entries) => entries.delete_directory(vfs, rest),
+                            // The other workspace is responsible for the deletion
+                            DirEntries::NestedWorkspace(_) => Ok(()),
+                        }
                     } else {
                         drop(inner);
                         self.remove_name(name);
@@ -482,14 +499,27 @@ impl Entries {
     }
 
     /// Walks the entries and aborts descending if the callable returns false
-    pub fn walk_entries(
+    pub fn walk_entries<X>(
         &self,
-        vfs: &dyn VfsHandler,
+        vfs: &Vfs<X>,
         callable: &mut impl FnMut(&Self, &DirectoryEntry) -> bool,
     ) {
         for entry in self.borrow().iter() {
             if callable(self, entry) {
                 entry.walk_internal(vfs, callable)
+            }
+        }
+    }
+}
+
+impl DirEntries {
+    pub(crate) fn expect(&self) -> &Entries {
+        match self {
+            DirEntries::Entries(entries) => &entries,
+            DirEntries::NestedWorkspace(weak) => {
+                let strong = weak.upgrade().unwrap();
+                let reference = &strong.entries as *const Entries;
+                unsafe { &*reference }
             }
         }
     }

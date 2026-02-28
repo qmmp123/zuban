@@ -293,13 +293,15 @@ impl TestCase<'_, '_> {
             !self.name.ends_with("_no_empty") && self.file_name != "check-abstract";
 
         BASE_PATH.with(|base_path| {
+            let current_dir = NormalizedPath::arc_to_abs_path(base_path.clone());
             cli_args::apply_flags_detailed(
                 local_fs,
                 &mut settings,
                 &mut config,
                 &mut diagnostic_config,
+                current_dir.clone(),
                 flags.cli,
-                NormalizedPath::arc_to_abs_path(base_path.clone()),
+                current_dir,
                 None,
             );
         });
@@ -438,19 +440,21 @@ impl TestCase<'_, '_> {
                             return None;
                         }
                         (!is_parse_test || d.mypy_error_code() == "syntax").then(|| {
-                            let mut s = d.as_string(&diagnostic_config);
+                            let mut s = d.as_string(&diagnostic_config, None);
                             if s.starts_with("__main__.py:") {
                                 s = s.replace("__main__.py:", "__main__:");
                             }
                             if cfg!(target_os = "windows") {
-                                // TODO this only checks the first line, but with notes there may
-                                // be multiple lines.
-                                let colon = s.find(":").unwrap();
-                                let to_change = &mut s[..colon];
                                 // Safety: OK because we only modify ASCII
-                                for b in unsafe { to_change.as_bytes_mut() } {
-                                    if *b == b'\\' {
-                                        *b = b'/'
+                                let bytes = unsafe { s.as_bytes_mut() };
+                                for line in bytes.split_mut(|c| *c == b'\n') {
+                                    if let Some(colon) = line.iter().position(|c| *c == b':') {
+                                        let to_change = &mut line[..colon];
+                                        for b in to_change {
+                                            if *b == b'\\' {
+                                                *b = b'/'
+                                            }
+                                        }
                                     }
                                 }
                             }

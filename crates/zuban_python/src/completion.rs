@@ -164,7 +164,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
                                 i_s.db,
                                 *dots,
                                 *base,
-                                |_| (),
+                                |_| false,
                             )
                     }))
                 }
@@ -428,7 +428,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
 
     fn add_namespace_completions(&mut self, namespace: &Namespace) {
         for dir in namespace.directories.iter() {
-            self.directory_entries_completions(Directory::entries(&*self.infos.db.vfs.handler, dir))
+            self.directory_entries_completions(Directory::entries(&self.infos.db.vfs, dir))
         }
     }
 
@@ -501,7 +501,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
         let (file_entry, is_package) = file.file_entry_and_is_package(db);
         if is_package && let Parent::Directory(dir) = &file_entry.parent {
             let dir = dir.upgrade().unwrap();
-            self.directory_entries_completions(Directory::entries(&*db.vfs.handler, &dir))
+            self.directory_entries_completions(Directory::entries(&db.vfs, &dir))
         }
     }
 
@@ -523,7 +523,7 @@ impl<'db, C: for<'a> Fn(Range, &dyn Completion) -> Option<T>, T> CompletionResol
                     }
                 }
                 DirectoryEntry::Directory(dir) => &dir.name,
-                DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => continue,
+                _ => continue,
             };
             // Unsafe: The name always lives as long as 'db, because file entries are
             // only cleaned up once this lifetime is released.
@@ -958,9 +958,10 @@ impl<'db> Completion for CompletionDirEntry<'db, '_> {
     fn kind(&self) -> CompletionItemKind {
         match self.entry {
             DirectoryEntry::File(_) => CompletionItemKind::MODULE,
-            DirectoryEntry::MissingEntry(_) => unreachable!(),
-            DirectoryEntry::Directory(_) | DirectoryEntry::Gitignore(_) => {
-                CompletionItemKind::FOLDER
+            DirectoryEntry::Directory(_) => CompletionItemKind::FOLDER,
+            _ => {
+                recoverable_error!("Exptected no completion entry for {:?}", &self.entry);
+                CompletionItemKind::MODULE
             }
         }
     }

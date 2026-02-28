@@ -133,8 +133,8 @@ impl<'db> ImportFinder<'db> {
             .borrow()
             .iter()
             .filter_map(|dir_entry| match dir_entry {
-                DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => None,
-                e => Some(e.clone()),
+                DirectoryEntry::File(_) | DirectoryEntry::Directory(_) => Some(dir_entry.clone()),
+                _ => None,
             })
             .collect();
         entries.into_par_iter().for_each(|entry| match entry {
@@ -149,14 +149,14 @@ impl<'db> ImportFinder<'db> {
                     self.find_importable_name_in_file_entry(&entry, false);
                 }
             }
-            DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => {
-                unreachable!("Removed above")
-            }
             DirectoryEntry::Directory(dir) => self.find_importable_name_in_entries(
-                Directory::entries(&*self.db.vfs.handler, &dir),
+                Directory::entries(&self.db.vfs, &dir),
                 true,
                 add_submodules,
             ),
+            _ => {
+                unreachable!("Removed above")
+            }
         })
     }
 
@@ -234,9 +234,9 @@ fn all_recursive_public_typeshed_file_entries(
                     if dir.name.starts_with('_') || dir.name.starts_with('@') {
                         return;
                     }
-                    recurse(db, found, Directory::entries(&*db.vfs.handler, dir))
+                    recurse(db, found, Directory::entries(&db.vfs, dir))
                 }
-                DirectoryEntry::MissingEntry(_) | DirectoryEntry::Gitignore(_) => (),
+                _ => (),
             }
         })
     }
@@ -512,10 +512,8 @@ impl TypeshedSymbols {
                             Parent::Directory(dir) => {
                                 let dir = dir.upgrade().unwrap();
                                 if entry.name.as_ref() == "__init__.pyi" {
-                                    Directory::entries(&*db.vfs.handler, &dir)
-                                        .borrow()
-                                        .iter()
-                                        .for_each(|dir_entry| {
+                                    Directory::entries(&db.vfs, &dir).borrow().iter().for_each(
+                                        |dir_entry| {
                                             let name = dir_entry.name();
                                             if name != "__init__.pyi" {
                                                 insert_symbol(
@@ -523,7 +521,8 @@ impl TypeshedSymbols {
                                                     name.trim_end_matches(".pyi"),
                                                 )
                                             }
-                                        })
+                                        },
+                                    )
                                 }
                             }
                             Parent::Workspace(_) => {

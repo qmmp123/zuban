@@ -237,6 +237,13 @@ impl Type {
                 },
                 _ => Match::new_false(),
             },
+            Self::TypeForm(tf1) => match value_type {
+                Self::TypeForm(t2) | Self::Type(t2) => {
+                    tf1.matches_internal(i_s, matcher, t2, variance)
+                }
+                Self::None => tf1.matches_internal(i_s, matcher, &Self::None, variance),
+                _ => Match::new_false(),
+            },
         }
     }
 
@@ -331,7 +338,7 @@ impl Type {
         match value_type {
             Type::Class(c2) => {
                 let class2 = c2.class(i_s.db);
-                if class2.incomplete_mro(i_s.db) && self.maybe_class(i_s.db).is_some() {
+                if class2.incomplete_mro(i_s.db) && self.is_subclassable(i_s.db) {
                     debug!(
                         "Match of class, because base class is incomplete: {}",
                         class2.format_short(i_s.db)
@@ -738,6 +745,13 @@ impl Type {
                             .into(),
                             MetaclassState::None => Match::new_false(),
                         }
+                        .or(|| {
+                            // x: GenericAlias = list[int] is fine
+                            (class1.node_ref == i_s.db.python_state.generic_alias_node_ref()
+                                && matches!(c2.generics, ClassGenerics::List(_))
+                                && variance == Variance::Covariant)
+                                .into()
+                        })
                     }
                     _ => Match::new_false(),
                 };

@@ -133,16 +133,18 @@ jobs:
 
       - name: "Test wheel (container)"
         if: matrix.t.test == 'container'
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ${{ matrix.t.image }}
-          options: -v ${{ github.workspace }}:/workspace -w /workspace ${{ matrix.t.docker_options }}
-          run: |
-            ${{ matrix.t.install_cmd }}
-            cd ${{ env.DEPLOY_DIR }}
-            python3 -m venv venv
-            . ./venv/bin/activate
-            ./test-maturin-build.sh
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace ${{ matrix.t.docker_options }} \
+            ${{ matrix.t.image }} \
+            sh -c "
+              ${{ matrix.t.install_cmd }}
+              cd ${{ env.DEPLOY_DIR }}
+              python3 -m venv venv &&
+              . ./venv/bin/activate &&
+              ./test-maturin-build.sh
+            "
 
       - name: "Upload wheel as a GitHub Artifact"
         uses: actions/upload-artifact@v4

@@ -10,7 +10,7 @@ use vfs::{AbsPath, SimpleLocalFS, VfsHandler};
 
 use clap::Parser;
 
-#[derive(Parser, Default)]
+#[derive(Parser, Default, Debug)]
 pub struct Cli {
     // Additional options that are not present in zmypy
     /// Choosing a mode sets the basic preset of flags. The default mode is typed, which is not
@@ -46,7 +46,7 @@ impl Cli {
     }
 }
 
-#[derive(Parser, Clone, Default)]
+#[derive(Parser, Clone, Default, Debug)]
 pub struct MypyCli {
     // Running code:
     /// Regular expression to match file names, directory names or paths which mypy should ignore
@@ -294,8 +294,9 @@ pub fn apply_flags(
     vfs_handler: &SimpleLocalFS,
     project_options: &mut ProjectOptions,
     diagnostic_config: &mut DiagnosticConfig,
-    cli: Cli,
     current_dir: Arc<AbsPath>,
+    cli: Cli,
+    project_dir: Arc<AbsPath>,
     config_path: Option<&AbsPath>,
 ) {
     apply_flags_detailed(
@@ -303,8 +304,9 @@ pub fn apply_flags(
         &mut project_options.settings,
         &mut project_options.flags,
         diagnostic_config,
-        cli,
         current_dir,
+        cli,
+        project_dir,
         config_path,
     )
 }
@@ -314,8 +316,9 @@ pub fn apply_flags_detailed(
     settings: &mut Settings,
     flags: &mut TypeCheckerFlags,
     diagnostic_config: &mut DiagnosticConfig,
-    cli: Cli,
     current_dir: Arc<AbsPath>,
+    cli: Cli,
+    project_dir: Arc<AbsPath>,
     config_path: Option<&AbsPath>,
 ) {
     if let Some(mode) = cli.mode {
@@ -330,10 +333,14 @@ pub fn apply_flags_detailed(
         settings,
         flags,
         diagnostic_config,
-        cli.mypy_options,
         current_dir,
+        cli.mypy_options,
         config_path,
-    )
+    );
+
+    settings
+        .mypy_path
+        .push(vfs_handler.normalize_rc_path(project_dir));
 }
 
 fn apply_mypy_flags(
@@ -341,8 +348,8 @@ fn apply_mypy_flags(
     settings: &mut Settings,
     flags: &mut TypeCheckerFlags,
     diagnostic_config: &mut DiagnosticConfig,
-    cli: MypyCli,
     current_dir: Arc<AbsPath>,
+    cli: MypyCli,
     config_path: Option<&AbsPath>,
 ) {
     macro_rules! apply {
@@ -456,8 +463,4 @@ fn apply_mypy_flags(
             .map(|e| &e.regex_str)
             .collect::<Vec<_>>()
     );
-
-    settings
-        .mypy_path
-        .push(vfs_handler.normalize_rc_path(current_dir));
 }

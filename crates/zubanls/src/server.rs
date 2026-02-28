@@ -296,7 +296,7 @@ impl<'sender> GlobalState<'sender> {
                 .first()
                 .expect("There should always be at least one root at this point");
             let first_root = vfs_handler.unchecked_abs_path(first_root);
-            let mut config = config::find_workspace_config(&vfs_handler, &first_root, |path| {
+            let mut config = config::find_workspace_config(&vfs_handler, first_root.clone(), |path| {
                 // Watch the file itself to make sure that we can invalidate when it changes.
                 let path = Path::new(&**path);
                 vfs_handler.watch(path);
@@ -357,11 +357,11 @@ impl<'sender> GlobalState<'sender> {
             if self.typeshed_path.is_some() {
                 config.settings.typeshed_path = self.typeshed_path.clone();
             }
-            config
-                .settings
-                .try_to_apply_environment_variables(&vfs_handler, &first_root, |n| {
-                    std::env::var(n)
-                });
+            config.settings.try_to_apply_environment_variables(
+                &vfs_handler,
+                &first_root.clone(),
+                |n| std::env::var(n),
+            );
 
             let vfs = Box::new(vfs_handler);
             *project = Some(if let Some(recovery) = self.panic_recovery.take() {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, sync::Arc};
+use std::{collections::HashMap, io::Write, path::Path, sync::Arc};
 
 use colored::{ColoredString, Colorize as _};
 use config::DiagnosticConfig;
@@ -38,7 +38,7 @@ pub(crate) enum IssueKind {
     ImportStubNoExplicitReexport { module_name: Box<str>, attribute: Box<str> },
     UnsupportedClassScopedImport,
     UnimportedRevealType,  // From --enable-error-code=unimported-reveal
-    NameError { name: Box<str> },
+    NameError { name: Box<str>, note: Option<Box<str>> },
     ReadingDeletedVariable,
     ArgumentIssue(Box<str>),
     ArgumentTypeIssue(Box<str>),
@@ -47,7 +47,7 @@ pub(crate) enum IssueKind {
     IncompatibleDefaultArgument{ argument_name: Box<str>, got: Box<str>, expected: Box<str> },
     InvalidCastTarget,
     IncompatibleReturn { got: Box<str>, expected: Box<str> },
-    IncompatibleImplicitReturn { expected: Box<str> },
+    IncompatibleImplicitReturn { expected: Box<str>, note: Option<&'static str> },
     ReturnValueExpected,
     NoReturnValueExpected,
     IncompatibleTypes { cause: &'static str, got: Box<str>, expected: Box<str> },
@@ -55,8 +55,8 @@ pub(crate) enum IssueKind {
     InvalidGeneratorReturnType,
     InvalidAsyncGeneratorReturnType,
     ReturnStmtInFunctionWithNeverReturn,
-    ImplicitReturnInFunctionWithNeverReturn,
-    MissingReturnStatement { code: &'static str },
+    ImplicitReturnInFunctionWithNeverReturn { note: Option<&'static str> },
+    MissingReturnStatement { code: &'static str, note: Option<&'static str> },
     YieldFromIncompatibleSendTypes { got: Box<str>, expected: Box<str> },
     YieldFromCannotBeApplied { to: Box<str> },
     YieldValueExpected,
@@ -157,7 +157,7 @@ pub(crate) enum IssueKind {
     ProtocolWithTypeParamsNoBracketsExpected,
     InvalidShadowingOfTypeshedModule { module: &'static str },
 
-    InvalidType(Box<str>),
+    InvalidType { message: Box<str>, additional_note: Option<&'static str> },
     InvalidTypeDeclaration,
     ClassVarOnlyInAssignmentsInClass,
     ClassVarNestedInsideOtherType,
@@ -237,7 +237,7 @@ pub(crate) enum IssueKind {
         string_name: Box<str>,
         variable_name: Box<str>
     },
-    TypeVarInReturnButNotArgument,
+    TypeVarInReturnButNotArgument { note: Option<Box<str>> },
     TypeVarCovariantInParamType,
     TypeVarContravariantInReturnType,
     TypeVarVarianceIncompatibleWithParentType { type_var_name: Box<str> },
@@ -522,7 +522,7 @@ impl IssueKind {
     pub fn mypy_error_code(&self) -> Option<&'static str> {
         use IssueKind::*;
         Some(match &self {
-            Note(_) | InvariantNote { .. } | InvalidDunderMatchArgs => return None,
+            Note(_) | InvariantNote { .. } => return None,
             InvalidSyntax
             | InvalidSyntaxInTypeComment { .. }
             | InvalidSyntaxInTypeAnnotation
@@ -542,12 +542,12 @@ impl IssueKind {
             | NotIterableMissingIterInUnion { .. } => "union-attr",
             ArgumentTypeIssue(_) | SuperArgument1MustBeTypeObject { .. } => "arg-type",
             ArgumentIssue { .. } | TooManyArguments { .. } | TooFewArguments { .. } => "call-arg",
-            InvalidType(_) => "valid-type",
+            InvalidType { .. } => "valid-type",
             IncompatibleReturn { .. }
             | IncompatibleImplicitReturn { .. }
             | ReturnValueExpected
             | NoReturnValueExpected => "return-value",
-            MissingReturnStatement { code } => code,
+            MissingReturnStatement { code, .. } => code,
             IncompatibleDefaultArgument { .. }
             | IncompatibleAssignment { .. }
             | IncompatibleAssignmentInSubclass { .. }
@@ -557,7 +557,7 @@ impl IssueKind {
             | InvalidSetItemTarget { .. } => "assignment",
             CannotAssignToAMethod => "method-assign",
             InvalidGetItem { .. } | NotIndexable { .. } | UnsupportedSetItemTarget(_) => "index",
-            TypeVarInReturnButNotArgument
+            TypeVarInReturnButNotArgument { .. }
             | TypeVarCovariantInParamType
             | TypeVarContravariantInReturnType
             | TypeVarVarianceIncompatibleWithParentType { .. }
@@ -623,6 +623,9 @@ impl IssueKind {
             | TypedDictHasNoKeyForGet { .. } => "typeddict-item",
             TypedDictExtraKey { .. } | TypedDictHasNoKey { .. } => "typeddict-unknown-key",
             TypedDictReadOnlyKeyMutated { .. } => "typeddict-readonly-mutated",
+            TypedDictAccessKeyMustBeStringLiteral { .. }
+            | TypedDictKeysMustBeStringLiteral
+            | InvalidDunderMatchArgs => "literal-required",
 
             UnreachableStatement
             | RightOperandIsNeverOperated { .. }
@@ -649,29 +652,36 @@ impl IssueKind {
             CannotAssignToAMethod => "assignment",
             ModuleNotFound { .. } => "import",
             OverloadUnmatchable { .. } | DecoratorOnTopOfPropertyNotSupported => "misc",
+            TypedDictAccessKeyMustBeStringLiteral { .. }
+            | TypedDictKeysMustBeStringLiteral
+            | InvalidDunderMatchArgs => "misc",
             _ => return None,
         })
     }
 
-    pub(crate) fn should_be_reported(&self, flags: &TypeCheckerFlags) -> bool {
+    pub(crate) fn is_disabled(&self, flags: &TypeCheckerFlags) -> bool {
         if !flags.disabled_error_codes.is_empty() {
-            let should_not_report = |code| {
-                if let Some(code) = code
-                    && flags.disabled_error_codes.iter().any(|c| c == code)
-                    && !flags.enabled_error_codes.iter().any(|c| c == code)
-                {
-                    return true;
-                }
-                false
+            let should_not_report = |code: Option<&str>| {
+                code.is_some_and(|code| {
+                    flags.disabled_error_codes.iter().any(|c| c == code)
+                        && !flags.enabled_error_codes.iter().any(|c| c == code)
+                })
             };
             if should_not_report(self.mypy_error_code()) {
-                return false;
+                return true;
             }
             if should_not_report(self.mypy_error_supercode()) {
-                return false;
+                return true;
             }
         }
-        true
+        false
+    }
+
+    pub(crate) fn new_invalid_type(message: impl Into<Box<str>>) -> Self {
+        IssueKind::InvalidType {
+            message: message.into(),
+            additional_note: None,
+        }
     }
 }
 
@@ -798,7 +808,7 @@ impl<'db> Diagnostic<'db> {
                 | AttributeError { .. }
                 | OverloadUnmatchable { .. }
                 | OverloadImplementationParamsNotBroadEnough { .. }
-                | TypeVarInReturnButNotArgument
+                | TypeVarInReturnButNotArgument { .. }
                 | OnlyClassTypeApplication
                 | UnsupportedClassScopedImport
                 | CannotInheritFromFinalClass { .. }
@@ -845,7 +855,12 @@ impl<'db> Diagnostic<'db> {
             ),
             UnsupportedClassScopedImport =>
                 "Unsupported class scoped import".to_string(),
-            NameError{name} => format!(r#"Name "{name}" is not defined"#),
+            NameError{ name, note } => {
+                if let Some(note) = note {
+                    additional_notes.push(note.clone().into())
+                }
+                format!(r#"Name "{name}" is not defined"#)
+            }
             ReadingDeletedVariable => format!(
                 r#"Trying to read deleted variable "{}""#,
                 self.code_under_issue()
@@ -853,9 +868,12 @@ impl<'db> Diagnostic<'db> {
             IncompatibleReturn{got, expected} => {
                 format!(r#"Incompatible return value type (got "{got}", expected "{expected}")"#)
             }
-            IncompatibleImplicitReturn { expected } => format!(
-                r#"Incompatible return value type (implicitly returns "None", expected "{expected}")"#
-            ),
+            IncompatibleImplicitReturn { expected, note } => {
+                if let Some(note) = note {
+                    additional_notes.push(note.to_string())
+                }
+                format!(r#"Incompatible return value type (implicitly returns "None", expected "{expected}")"#)
+            }
             ReturnValueExpected => "Return value expected".to_string(),
             NoReturnValueExpected => "No return value expected".to_string(),
             IncompatibleTypes{cause, got, expected} => {
@@ -868,9 +886,18 @@ impl<'db> Diagnostic<'db> {
                 r#"The return type of an async generator function should be "AsyncGenerator" or one of its supertypes"#.to_string(),
             ReturnStmtInFunctionWithNeverReturn =>
                 "Return statement in function which does not return".to_string(),
-            ImplicitReturnInFunctionWithNeverReturn =>
-                "Implicit return in function which does not return".to_string(),
-            MissingReturnStatement { .. } => "Missing return statement".to_string(),
+            ImplicitReturnInFunctionWithNeverReturn { note } => {
+                if let Some(note) = note {
+                    additional_notes.push(note.to_string());
+                }
+                "Implicit return in function which does not return".to_string()
+            }
+            MissingReturnStatement { note, .. } => {
+                if let Some(note) = note {
+                    additional_notes.push(note.to_string());
+                }
+                "Missing return statement".to_string()
+            },
             YieldFromIncompatibleSendTypes { got, expected } => format!(
                 r#"Incompatible send types in yield from (actual type "{got}", expected type "{expected}")"#
             ),
@@ -965,7 +992,13 @@ impl<'db> Diagnostic<'db> {
             NameUsedBeforeDefinition { name } => format!(
                 r#"Name "{name}" is used before definition"#
             ),
-            ArgumentIssue(s) | ArgumentTypeIssue(s) | InvalidType(s) => s.clone().into(),
+            ArgumentIssue(s) | ArgumentTypeIssue(s) => s.clone().into(),
+            InvalidType { message, additional_note } => {
+                if let Some(additional_note) = additional_note {
+                    additional_notes.push(additional_note.to_string());
+                }
+                message.clone().into()
+            }
             TooManyArguments(rest) => format!("Too many arguments{rest}"),
             TooFewArguments(rest) => format!("Too few arguments{rest}"),
             IncompatibleDefaultArgument {argument_name, got, expected} => {
@@ -1536,8 +1569,12 @@ impl<'db> Diagnostic<'db> {
                 "String argument 1 \"{string_name}\" to {class_name}(...) does not \
                  match variable name \"{variable_name}\""
             ),
-            TypeVarInReturnButNotArgument =>
-                "A function returning TypeVar should receive at least one argument containing the same Typevar".to_string(),
+            TypeVarInReturnButNotArgument { note } => {
+                if let Some(note) = note {
+                    additional_notes.push(note.clone().into())
+                }
+                "A function returning TypeVar should receive at least one argument containing the same Typevar".to_string()
+            }
             TypeVarCovariantInParamType =>
                 "Cannot use a covariant type variable as a parameter".to_string(),
             TypeVarContravariantInReturnType =>
@@ -2104,18 +2141,26 @@ impl<'db> Diagnostic<'db> {
         msg
     }
 
-    fn message_formatting_options(&self, config: &DiagnosticConfig) -> MessageFormattingInfos<'db> {
+    fn message_formatting_options(
+        &self,
+        config: &DiagnosticConfig,
+        current_dir: Option<&str>,
+    ) -> MessageFormattingInfos {
         let original_file = self.file.original_file(self.db);
-        let path = self
-            .db
-            .file_path(original_file.file_index)
-            .trim_start_matches(&***original_file.file_entry(self.db).parent.workspace_path());
-        let path = self
-            .db
-            .vfs
-            .handler
-            .strip_separator_prefix(path)
-            .unwrap_or(path);
+        let abs = self.db.file_path(original_file.file_index);
+        let path = if let Some(current_dir) = current_dir {
+            self.db
+                .vfs
+                .handler
+                .path_relative_to(abs, Path::new(current_dir))
+        } else {
+            let to = original_file.file_entry(self.db).parent.workspace_path();
+            self.db
+                .vfs
+                .handler
+                .path_relative_to(abs, to.as_ref().as_ref())
+        }
+        .unwrap_or_else(|| abs.to_string());
         let mut additional_notes = vec![];
         let error = self.message_with_notes(&mut additional_notes);
 
@@ -2143,8 +2188,8 @@ impl<'db> Diagnostic<'db> {
         }
     }
 
-    pub fn as_string(&self, config: &DiagnosticConfig) -> String {
-        let opts = self.message_formatting_options(config);
+    pub fn as_string(&self, config: &DiagnosticConfig, current_dir: Option<&str>) -> String {
+        let opts = self.message_formatting_options(config, current_dir);
         let fmt_line =
             |kind, error| format!("{}{}: {kind}: {error}", opts.path, opts.line_number_infos);
         let mut result = fmt_line(opts.kind, &opts.error);
@@ -2171,8 +2216,9 @@ impl<'db> Diagnostic<'db> {
         &self,
         writer: &mut dyn Write,
         config: &DiagnosticConfig,
+        current_dir: &str,
     ) -> std::io::Result<()> {
-        let opts = self.message_formatting_options(config);
+        let opts = self.message_formatting_options(config, Some(current_dir));
         let fmt_line = |writer: &mut dyn Write, kind: &str, error| {
             write!(writer, "{}{}: ", opts.path, opts.line_number_infos)?;
             if kind == "error" {
@@ -2291,17 +2337,17 @@ fn highlight_quote_groups(out: &mut dyn Write, msg: &str) -> std::io::Result<()>
     Ok(())
 }
 
-struct MessageFormattingInfos<'db> {
+struct MessageFormattingInfos {
     error: String,
     additional_notes: Vec<String>,
     kind: &'static str,
-    path: &'db str,
+    path: String,
     line_number_infos: String,
 }
 
 impl std::fmt::Debug for Diagnostic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", &self.as_string(&DiagnosticConfig::default()))
+        write!(f, "{}", &self.as_string(&DiagnosticConfig::default(), None))
     }
 }
 

@@ -356,7 +356,7 @@ fn calculate_init_of_dataclass(db: &Database, dataclass: &Arc<Dataclass>) -> Ini
                         );
                         if right_side.is_some_and(|right_side| !right_side.is_literal_value()) {
                             annotation_ref
-                                .add_issue(i_s, IssueKind::NeedTypeArgumentForFinalInDataclass)
+                                .add_issue(i_s, IssueKind::NeedTypeArgumentForFinalInDataclass);
                         }
                     }
                 }
@@ -556,7 +556,7 @@ fn set_descriptor_update_for_init(i_s: &InferenceState, t: &mut Type) {
         return;
     };
     let lookup = cls
-        .lookup(i_s, "__set__", ClassLookupOptions::new(&|_| ()))
+        .lookup(i_s, "__set__", ClassLookupOptions::new(&|_| false))
         .lookup;
     let Some(inf) = lookup.maybe_inferred() else {
         return;
@@ -694,7 +694,7 @@ fn field_options_from_args(
                         arg.add_issue(
                             i_s,
                             IssueKind::ArgumentMustBeTrueOrFalse { key: key.into() },
-                        )
+                        );
                     }
                 }
                 "init" => {
@@ -705,7 +705,7 @@ fn field_options_from_args(
                         arg.add_issue(
                             i_s,
                             IssueKind::ArgumentMustBeTrueOrFalse { key: key.into() },
-                        )
+                        );
                     }
                 }
                 "alias" if in_dataclass_transform => {
@@ -716,7 +716,7 @@ fn field_options_from_args(
                         arg.add_issue(
                             i_s,
                             IssueKind::DataclassTransformFieldAliasParamMustBeString,
-                        )
+                        );
                     }
                 }
                 "factory" if in_dataclass_transform => options.has_default = true,
@@ -892,7 +892,7 @@ pub(crate) fn dataclasses_replace<'db>(
 
 fn run_on_dataclass_for_replace(
     i_s: &InferenceState,
-    add_issue: Option<&dyn Fn(IssueKind)>,
+    add_issue: Option<&dyn Fn(IssueKind) -> bool>,
     t: &Type,
     callback: &mut impl FnMut(&Arc<Dataclass>),
 ) -> bool {
@@ -925,6 +925,14 @@ fn run_on_dataclass_for_replace(
             TypeVarKind::Constraints(_) => unimplemented!(),
             TypeVarKind::Unrestricted => type_var_error(&tv.type_var),
         },
+        Type::Self_ => {
+            if let Some(t) = i_s.current_type() {
+                run_on_dataclass_for_replace(i_s, add_issue, &t, callback)
+            } else {
+                recoverable_error!("Proper self type expected in dataclass replace");
+                false
+            }
+        }
         _ => {
             if let Some(add_issue) = add_issue {
                 add_issue(IssueKind::DataclassReplaceExpectedDataclass {
@@ -1056,7 +1064,7 @@ pub(crate) fn lookup_on_dataclass_type<'a>(
     in_type: &Arc<Type>,
     dataclass: &'a Arc<Dataclass>,
     i_s: &'a InferenceState,
-    add_issue: impl Fn(IssueKind),
+    add_issue: impl Fn(IssueKind) -> bool,
     name: &str,
     kind: LookupKind,
 ) -> LookupDetails<'a> {
@@ -1186,7 +1194,7 @@ pub fn lookup_dataclass_symbol<'db: 'a, 'a>(
 pub(crate) fn lookup_on_dataclass<'a>(
     self_: &'a Arc<Dataclass>,
     i_s: &'a InferenceState,
-    add_issue: impl Fn(IssueKind),
+    add_issue: impl Fn(IssueKind) -> bool,
     name: &str,
 ) -> LookupDetails<'a> {
     if self_.options.frozen == Some(true)

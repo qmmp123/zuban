@@ -719,3 +719,29 @@ typing.a  # E: Module has no attribute "a"
 
 [file typing/__init__.pyi]
 # E: Module shadows the typeshed module "typing"
+
+[case read_file_only_once]
+
+[file pyproject.toml]
+[tool.zuban]
+mypy_path = ["src", "src/inner"]
+
+[file src/inner/m1.py]
+import m2
+from inner.m2 import C
+import src
+
+a: m2.C = C()
+b: C = m2.C()
+c: C = C()
+d: m2.C = m2.C()
+
+e: src.inner.m2.C = C()
+
+[file src/inner/m2.py]
+class C: ...
+
+[out]
+-- TODO currently this does not work for in-memory files, but it works if the files actually exist in the file system, see test_read_file_only_once
+m1.py:2: error: Cannot find implementation or library stub for module named "inner"
+m1.py:3: error: Cannot find implementation or library stub for module named "src"

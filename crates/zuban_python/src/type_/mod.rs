@@ -532,6 +532,7 @@ pub(crate) enum Type {
     LiteralString {
         implicit: bool,
     },
+    TypeForm(Arc<Type>),
     Any(AnyCause),
     Never(NeverCause),
 }
@@ -745,6 +746,11 @@ impl Type {
         }
     }
 
+    pub fn valid_in_type_form_assignment(&self, db: &Database) -> bool {
+        self.iter_with_unpacked_unions(db)
+            .all(|t| matches!(t, Type::TypeForm(_) | Type::Type(_) | Type::None))
+    }
+
     pub fn iter_with_unpacked_unions_without_unpacking_recursive_types(
         &self,
     ) -> impl Iterator<Item = &Type> {
@@ -907,6 +913,7 @@ impl Type {
                         |issue| {
                             debug!("Caught issue: {issue:?}");
                             had_issue.set(true);
+                            false
                         },
                         "__call__",
                     )
@@ -927,7 +934,10 @@ impl Type {
         let cls_callable = |cls: Class| {
             let error = Cell::new(false);
             let result = cls
-                .find_relevant_constructor(i_s, &|_| error.set(true))
+                .find_relevant_constructor(i_s, &|_| {
+                    error.set(true);
+                    false
+                })
                 .maybe_callable(i_s, cls);
             if error.get() {
                 return None;
@@ -1181,6 +1191,7 @@ impl Type {
             Self::CustomBehavior(_) => "TODO custombehavior".into(),
             Self::DataclassTransformObj(_) => "TODO dataclass_transform".into(),
             Self::LiteralString { .. } => "LiteralString".into(),
+            Self::TypeForm(t) => format!("typing.TypeForm({})", t.format(format_data)).into(),
         }
     }
 
@@ -1244,6 +1255,7 @@ impl Type {
                     t.search_type_vars(found_type_var)
                 }
             }
+            Self::TypeForm(tf) => tf.search_type_vars(found_type_var),
         }
     }
 
@@ -1325,6 +1337,7 @@ impl Type {
             Self::Intersection(intersection) => intersection
                 .iter_entries()
                 .any(|t| t.has_any_internal(i_s, already_checked)),
+            Self::TypeForm(tf) => tf.has_any_internal(i_s, already_checked),
         }
     }
 
@@ -1580,7 +1593,7 @@ impl Type {
         &self,
         i_s: &InferenceState,
         value: &Inferred,
-        add_issue: impl Fn(IssueKind),
+        add_issue: impl Fn(IssueKind) -> bool,
         mut on_error: impl FnMut(&ErrorTypes) -> Option<IssueKind>,
     ) {
         self.error_if_not_matches_with_matcher(
@@ -1597,15 +1610,26 @@ impl Type {
         i_s: &InferenceState,
         matcher: &mut Matcher,
         value: &Inferred,
-        add_issue: impl Fn(IssueKind),
-        mut on_error: impl FnMut(&ErrorTypes, &MismatchReason) -> Option<IssueKind>,
+        add_issue: impl Fn(IssueKind) -> bool,
+        on_error: impl FnMut(&ErrorTypes, &MismatchReason) -> Option<IssueKind>,
     ) {
         let value_type = value.as_cow_type(i_s);
-        let matches = self.is_super_type_of(i_s, matcher, &value_type);
+        self.error_if_t_not_matches_with_matcher(i_s, matcher, &value_type, add_issue, on_error);
+    }
+
+    pub(crate) fn error_if_t_not_matches_with_matcher(
+        &self,
+        i_s: &InferenceState,
+        matcher: &mut Matcher,
+        value_type: &Type,
+        add_issue: impl Fn(IssueKind) -> bool,
+        mut on_error: impl FnMut(&ErrorTypes, &MismatchReason) -> Option<IssueKind>,
+    ) -> Match {
+        let matches = self.is_super_type_of(i_s, matcher, value_type);
         if let Match::False { ref reason, .. } = matches {
             let error_types = ErrorTypes {
                 expected: self,
-                got: GotType::Type(&value_type),
+                got: GotType::Type(value_type),
                 matcher: Some(matcher),
                 reason,
             };
@@ -1617,10 +1641,14 @@ impl Type {
                 );
             }
             if let Some(error) = on_error(&error_types, reason) {
-                add_issue(error);
-                error_types.add_mismatch_notes(add_issue)
+                if add_issue(error) {
+                    error_types.add_mismatch_notes(|kind| {
+                        add_issue(kind);
+                    })
+                }
             }
         }
+        matches
     }
 
     pub fn on_any_typed_dict(

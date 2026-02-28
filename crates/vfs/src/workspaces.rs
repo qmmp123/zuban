@@ -8,7 +8,7 @@ use utils::{OwnedMappedReadGuard, match_case};
 use crate::{
     AbsPath, DirOrFile, Directory, DirectoryEntry, NormalizedPath, Parent, PathWithScheme,
     VfsHandler,
-    tree::{AddedFile, Entries},
+    tree::{AddedFile, DirEntries, Entries},
     vfs::Scheme,
 };
 
@@ -25,7 +25,7 @@ pub enum WorkspaceKind {
 
 #[derive(Debug, Default)]
 pub struct Workspaces {
-    items: RwLock<Vec<Arc<Workspace>>>,
+    pub(crate) items: RwLock<Vec<Arc<Workspace>>>,
 }
 
 impl Workspaces {
@@ -35,11 +35,15 @@ impl Workspaces {
         scheme: Scheme,
         root: Arc<NormalizedPath>,
         kind: WorkspaceKind,
-    ) {
-        self.items
-            .write()
-            .unwrap()
-            .push(Workspace::new(vfs, scheme, root, kind))
+    ) -> bool {
+        let mut items = self.items.write().unwrap();
+        if items.iter().any(|item| item.root_path == root) {
+            // The path is already in there
+            return false;
+        }
+        let workspace = Workspace::new(vfs, &*items, scheme, root, kind);
+        items.push(workspace);
+        true
     }
 
     pub(crate) fn add_at_start(
@@ -49,8 +53,12 @@ impl Workspaces {
         root: Arc<NormalizedPath>,
         kind: WorkspaceKind,
     ) {
-        self.inner_items_mut()
-            .insert(0, Workspace::new(vfs, scheme, root, kind))
+        let items = self.inner_items_mut();
+        if items.iter().any(|item| item.root_path == root) {
+            // The path is already in there
+            return;
+        }
+        items.insert(0, Workspace::new(vfs, items, scheme, root, kind))
     }
 
     fn inner_items_mut(&mut self) -> &mut Vec<Arc<Workspace>> {
@@ -93,14 +101,14 @@ impl Workspaces {
             .map(|x| &x.entries)
     }
 
-    pub fn search_path(
+    pub(crate) fn search_path(
         &self,
         vfs: &dyn VfsHandler,
         case_sensitive: bool,
         path: &PathWithScheme,
     ) -> Option<DirOrFile> {
         self.strip_short_path_in_workspace(vfs, case_sensitive, path)
-            .and_then(|(workspace, rest)| workspace.entries.search_path(vfs, rest))
+            .and_then(|(workspace, rest)| workspace.entries.search_path(vfs, self, rest))
             .or_else(|| {
                 self.iter().find_map(|workspace| {
                     if workspace.kind == WorkspaceKind::Fallback
@@ -138,7 +146,7 @@ impl Workspaces {
             let mut rest = rest?;
             let mut current_dir: Option<Arc<Directory>> = None;
             loop {
-                let (name, new_rest) = vfs.split_off_folder(rest);
+                let (name, new_rest) = vfs.split_off_first_item(rest);
                 if let Some(new_rest) = new_rest {
                     // We generally return None in all cases where the nesting of the path is
                     // deeper than the current VFS. This is fine for invalidation, since
@@ -146,7 +154,7 @@ impl Workspaces {
                     // paths are reachable.
                     rest = new_rest;
                     let entries = if let Some(dir) = current_dir.as_ref() {
-                        dir.entries.get()?
+                        dir.entries.get()?.expect()
                     } else {
                         &workspace.entries
                     };
@@ -188,6 +196,7 @@ impl Workspaces {
                 Parent::Workspace(Arc::downgrade(&workspace)),
                 &workspace.entries,
                 vfs,
+                self,
                 rest,
                 code,
             );
@@ -236,10 +245,17 @@ impl Workspaces {
     // We intentionally use a &mut self here, because we want to avoid that the datastructures
     // inside are modified while we're cloning.
     pub(crate) fn clone_with_new_rcs(&mut self, vfs: &dyn VfsHandler) -> Self {
-        fn clone_inner_rcs(vfs: &dyn VfsHandler, dir: Directory) -> Arc<Directory> {
+        fn clone_inner_rcs(
+            vfs: &dyn VfsHandler,
+            workspaces: &Workspaces,
+            dir: Directory,
+        ) -> Arc<Directory> {
             // TODO not all entries need to be recalculated if it's not yet calculated
             let dir = Arc::new(dir);
-            for entry in Directory::entries(vfs, &dir).borrow_mut().iter_mut() {
+            for entry in Directory::entries_with_workspaces(vfs, workspaces, &dir)
+                .borrow_mut()
+                .iter_mut()
+            {
                 match entry {
                     DirectoryEntry::File(file) => {
                         let mut new_file = file.as_ref().clone();
@@ -250,7 +266,7 @@ impl Workspaces {
                     DirectoryEntry::Directory(inner_dir) => {
                         let mut new = inner_dir.as_ref().clone();
                         new.parent = Parent::Directory(Arc::downgrade(&dir));
-                        *inner_dir = clone_inner_rcs(vfs, new);
+                        *inner_dir = clone_inner_rcs(vfs, workspaces, new);
                     }
                     DirectoryEntry::Gitignore(_) => (),
                 }
@@ -266,7 +282,7 @@ impl Workspaces {
                         debug_assert!(matches!(dir.parent, Parent::Workspace(_)));
                         let mut new_dir = dir.as_ref().clone();
                         new_dir.parent = Parent::Workspace(Arc::downgrade(&new_workspace));
-                        *dir = clone_inner_rcs(vfs, new_dir)
+                        *dir = clone_inner_rcs(vfs, &Workspaces::default(), new_dir)
                     }
                     DirectoryEntry::File(file) => {
                         debug_assert!(matches!(file.parent, Parent::Workspace(_)));
@@ -313,6 +329,7 @@ pub struct Workspace {
 impl Workspace {
     fn new(
         vfs: &dyn VfsHandler,
+        workspaces: &[Arc<Workspace>],
         scheme: Scheme,
         root_path: Arc<NormalizedPath>,
         kind: WorkspaceKind,
@@ -371,10 +388,30 @@ impl Workspace {
             return workspace;
         }
         let new_entries = vfs.read_and_watch_dir(
+            workspaces,
             &workspace.root_path,
             Parent::Workspace(Arc::downgrade(&workspace)),
         );
         *workspace.entries.borrow_mut() = std::mem::take(&mut new_entries.borrow_mut());
+
+        // Workspaces are added as nested workspaces already for workspaces that are contained
+        // within this one. But this workspace could be contained by another one, check for that
+        // here.
+        if !workspaces.is_empty()
+            && let (Some(folder), name) = vfs.split_off_last_item(&workspace.root_path)
+        {
+            for old in workspaces {
+                if ***old.root_path == *folder
+                    && let Some(dir_entry) = old.entries.search(name)
+                    && let DirectoryEntry::Directory(dir) = &*dir_entry
+                {
+                    let result = dir
+                        .entries
+                        .set(DirEntries::NestedWorkspace(Arc::downgrade(&workspace)));
+                    debug_assert!(result.is_ok());
+                }
+            }
+        }
         workspace
     }
 
@@ -421,10 +458,11 @@ fn ensure_dirs_and_file(
     parent: Parent,
     entries: &Entries,
     vfs: &dyn VfsHandler,
+    workspaces: &Workspaces,
     path: &str,
     code: &str,
 ) -> AddedFile {
-    let (name, rest) = vfs.split_off_folder(path);
+    let (name, rest) = vfs.split_off_first_item(path);
     if let Some(rest) = rest {
         let mut invs = Default::default();
         if let Some(x) = entries.search(name) {
@@ -432,8 +470,9 @@ fn ensure_dirs_and_file(
                 DirectoryEntry::Directory(arc) => {
                     return ensure_dirs_and_file(
                         Parent::Directory(Arc::downgrade(arc)),
-                        Directory::entries(vfs, arc),
+                        Directory::entries_with_workspaces(vfs, workspaces, arc),
                         vfs,
+                        workspaces,
                         rest,
                         code,
                     );
@@ -449,8 +488,9 @@ fn ensure_dirs_and_file(
         let dir2 = Directory::new(parent, Box::from(name));
         let mut result = ensure_dirs_and_file(
             Parent::Directory(Arc::downgrade(&dir2)),
-            Directory::entries(vfs, &dir2),
+            Directory::entries_with_workspaces(vfs, workspaces, &dir2),
             vfs,
+            workspaces,
             rest,
             code,
         );
@@ -470,8 +510,8 @@ fn strip_path_prefix<'x>(
 ) -> Option<&'x str> {
     let mut to_strip: &str = to_strip;
     loop {
-        let (folder1, rest) = vfs.split_off_folder(path);
-        let (folder2, rest_to_strip) = vfs.split_off_folder(to_strip);
+        let (folder1, rest) = vfs.split_off_first_item(path);
+        let (folder2, rest_to_strip) = vfs.split_off_first_item(to_strip);
         if !match_case(case_sensitive, folder1, folder2) {
             return None;
         }

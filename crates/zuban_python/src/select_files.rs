@@ -179,11 +179,11 @@ impl<'db> FileSelector<'db> {
             if !not_yet_checked_globs.is_empty() {
                 self.added_file = false;
                 for entries in self.db.vfs.workspaces.entries_to_type_check() {
-                    entries.walk_entries(vfs_handler, &mut |in_dir, entry| {
+                    entries.walk_entries(&self.db.vfs, &mut |in_dir, entry| {
                         let path = match entry {
                             DirectoryEntry::File(file) => file.absolute_path(vfs_handler),
                             DirectoryEntry::Directory(dir) => dir.absolute_path(vfs_handler),
-                            DirectoryEntry::Gitignore(_) | DirectoryEntry::MissingEntry(_) => {
+                            _ => {
                                 return false;
                             }
                         };
@@ -244,16 +244,18 @@ impl<'db> FileSelector<'db> {
                 let path = dir.relative_path(handler);
                 if !should_skip_dir_or_file(&self.db.project.flags, &path)
                     && !self.ignored_by_gitignore(|| dir.absolute_path(handler), true)
+                    // Nested workspaces are handled by checking the other workspaces
+                    && !dir.is_nested_workspace()
                 {
                     self.handle_dir(dir)
                 }
             }
-            DirectoryEntry::Gitignore(_) | DirectoryEntry::MissingEntry(_) => (),
+            _ => (),
         }
     }
 
     fn handle_dir(&mut self, dir: &Arc<Directory>) {
-        self.handle_entries(Directory::entries(&*self.db.vfs.handler, dir))
+        self.handle_entries(Directory::entries(&self.db.vfs, dir))
     }
 
     fn handle_entries(&mut self, entries: &Entries) {

@@ -2815,7 +2815,7 @@ impl<'db> ArgumentsDetails<'db> {
         }
     }
 
-    pub fn maybe_single_named_expr(&self) -> Option<NamedExpression<'db>> {
+    pub fn maybe_single_positional(&self) -> Option<NamedExpression<'db>> {
         match self {
             Self::Node(args) => {
                 let mut iterator = args.iter();
@@ -3049,7 +3049,7 @@ impl<'db> Iterator for SimpleNameIterator<'db> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum AssignmentRightSide<'db> {
     YieldExpr(YieldExpr<'db>),
     StarExpressions(StarExpressions<'db>),
